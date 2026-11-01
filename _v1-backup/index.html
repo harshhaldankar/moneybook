@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>💰 Expense Manager</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2><i class="fas fa-wallet"></i> ExpenseApp</h2>
+        </div>
+        <ul class="nav-links">
+            <li><a href="#" class="nav-link active" data-view="dashboard"><i class="fas fa-chart-pie"></i> Dashboard</a></li>
+            <li><a href="#" class="nav-link" data-view="transactions"><i class="fas fa-exchange-alt"></i> Transactions</a></li>
+            <li><a href="#" class="nav-link" data-view="add-transaction"><i class="fas fa-plus-circle"></i> Add Transaction</a></li>
+            <li><a href="#" class="nav-link" data-view="transfer"><i class="fas fa-arrow-right-arrow-left"></i> Transfer</a></li>
+            <li><a href="#" class="nav-link" data-view="recurring"><i class="fas fa-repeat"></i> Recurring</a></li>
+            <li><a href="#" class="nav-link" data-view="budgets"><i class="fas fa-bullseye"></i> Budgets</a></li>
+            <li><a href="#" class="nav-link" data-view="reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
+            <li><a href="#" class="nav-link" data-view="settings"><i class="fas fa-cog"></i> Settings</a></li>
+        </ul>
+    </nav>
+
+    <!-- Mobile Header -->
+    <header class="mobile-header">
+        <button class="menu-btn" id="menuBtn"><i class="fas fa-bars"></i></button>
+        <h2><i class="fas fa-wallet"></i> ExpenseApp</h2>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content" id="mainContent">
+
+        <!-- ========== DASHBOARD VIEW ========== -->
+        <section class="view active" id="view-dashboard">
+            <h1 class="page-title">Dashboard</h1>
+            <div class="month-selector">
+                <button id="prevMonth"><i class="fas fa-chevron-left"></i></button>
+                <span id="currentMonth"></span>
+                <button id="nextMonth"><i class="fas fa-chevron-right"></i></button>
+            </div>
+
+            <!-- Account Cards -->
+            <div class="cards-row">
+                <div class="card account-card acc1">
+                    <div class="card-icon"><i class="fas fa-university"></i></div>
+                    <div class="card-info">
+                        <span class="card-label" id="acc1Name">Account 1</span>
+                        <span class="card-value" id="acc1Balance">₹0</span>
+                        <span class="card-sub">Daily Use</span>
+                    </div>
+                </div>
+                <div class="card account-card acc2">
+                    <div class="card-icon"><i class="fas fa-piggy-bank"></i></div>
+                    <div class="card-info">
+                        <span class="card-label" id="acc2Name">Account 2</span>
+                        <span class="card-value" id="acc2Balance">₹0</span>
+                        <span class="card-sub">Main / Salary</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="cards-row four-col">
+                <div class="card summary-card income">
+                    <i class="fas fa-arrow-down"></i>
+                    <span class="card-label">Income</span>
+                    <span class="card-value" id="totalIncome">₹0</span>
+                </div>
+                <div class="card summary-card expense">
+                    <i class="fas fa-arrow-up"></i>
+                    <span class="card-label">Expenses</span>
+                    <span class="card-value" id="totalExpense">₹0</span>
+                </div>
+                <div class="card summary-card transfer">
+                    <i class="fas fa-arrow-right-arrow-left"></i>
+                    <span class="card-label">Transfers</span>
+                    <span class="card-value" id="totalTransfer">₹0</span>
+                </div>
+                <div class="card summary-card savings">
+                    <i class="fas fa-leaf"></i>
+                    <span class="card-label">Savings</span>
+                    <span class="card-value" id="totalSavings">₹0</span>
+                </div>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="cards-row">
+                <div class="card chart-card">
+                    <h3>Spending by Category</h3>
+                    <canvas id="categoryChart"></canvas>
+                </div>
+                <div class="card chart-card">
+                    <h3>Daily Spending Trend</h3>
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Recent Transactions -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>Recent Transactions</h3>
+                    <a href="#" class="view-all-link" data-view="transactions">View All →</a>
+                </div>
+                <div class="transaction-list" id="recentTransactions"></div>
+            </div>
+
+            <!-- Upcoming Recurring -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>Upcoming Auto-Debits</h3>
+                </div>
+                <div class="recurring-list" id="upcomingRecurring"></div>
+            </div>
+        </section>
+
+        <!-- ========== ADD TRANSACTION VIEW ========== -->
+        <section class="view" id="view-add-transaction">
+            <h1 class="page-title">Add Transaction</h1>
+            <div class="card form-card">
+                <form id="transactionForm">
+                    <!-- Quick Type Selector -->
+                    <div class="type-selector">
+                        <button type="button" class="type-btn active" data-type="Expense"><i class="fas fa-arrow-up"></i> Expense</button>
+                        <button type="button" class="type-btn" data-type="Income"><i class="fas fa-arrow-down"></i> Income</button>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Amount (₹) *</label>
+                            <input type="number" id="txnAmount" placeholder="0" required min="1" step="0.01">
+                        </div>
+                        <div class="form-group">
+                            <label>Date *</label>
+                            <input type="date" id="txnDate" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Account *</label>
+                            <select id="txnAccount" required>
+                                <option value="Account 1">Account 1 (Daily Use)</option>
+                                <option value="Account 2">Account 2 (Main)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Category *</label>
+                            <select id="txnCategory" required>
+                                <option value="">Select Category</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Payment Mode</label>
+                            <select id="txnPaymentMode">
+                                <option value="UPI">UPI</option>
+                                <option value="Card">Card</option>
+                                <option value="Cash">Cash</option>
+                                <option value="Net Banking">Net Banking</option>
+                                <option value="Auto-Debit">Auto-Debit</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Sub-Category</label>
+                            <input type="text" id="txnSubCategory" placeholder="e.g., Swiggy, Petrol">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Note</label>
+                        <input type="text" id="txnNote" placeholder="Optional description">
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Transaction</button>
+                        <button type="reset" class="btn btn-secondary">Clear</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- ========== TRANSFER VIEW ========== -->
+        <section class="view" id="view-transfer">
+            <h1 class="page-title">Inter-Account Transfer</h1>
+            <div class="card form-card">
+                <div class="transfer-visual">
+                    <div class="transfer-account">
+                        <i class="fas fa-piggy-bank"></i>
+                        <span>Account 2</span>
+                        <span class="transfer-balance" id="transferFromBalance">₹0</span>
+                    </div>
+                    <div class="transfer-arrow"><i class="fas fa-arrow-right"></i></div>
+                    <div class="transfer-account">
+                        <i class="fas fa-university"></i>
+                        <span>Account 1</span>
+                        <span class="transfer-balance" id="transferToBalance">₹0</span>
+                    </div>
+                </div>
+                <form id="transferForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>From Account *</label>
+                            <select id="transferFrom" required>
+                                <option value="Account 2">Account 2 (Main)</option>
+                                <option value="Account 1">Account 1 (Daily Use)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>To Account *</label>
+                            <select id="transferTo" required>
+                                <option value="Account 1">Account 1 (Daily Use)</option>
+                                <option value="Account 2">Account 2 (Main)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Amount (₹) *</label>
+                            <input type="number" id="transferAmount" placeholder="0" required min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Date *</label>
+                            <input type="date" id="transferDate" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Note</label>
+                        <input type="text" id="transferNote" placeholder="e.g., Monthly withdrawal">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-exchange-alt"></i> Transfer</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- ========== TRANSACTIONS LIST VIEW ========== -->
+        <section class="view" id="view-transactions">
+            <h1 class="page-title">Transactions</h1>
+            <div class="card">
+                <div class="filters-bar">
+                    <div class="filter-group">
+                        <select id="filterAccount">
+                            <option value="all">All Accounts</option>
+                            <option value="Account 1">Account 1</option>
+                            <option value="Account 2">Account 2</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <select id="filterType">
+                            <option value="all">All Types</option>
+                            <option value="Income">Income</option>
+                            <option value="Expense">Expense</option>
+                            <option value="Transfer">Transfer</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <select id="filterCategory">
+                            <option value="all">All Categories</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <input type="text" id="filterSearch" placeholder="🔍 Search...">
+                    </div>
+                </div>
+                <div class="transaction-list" id="allTransactions"></div>
+                <div class="empty-state" id="noTransactions" style="display:none;">
+                    <i class="fas fa-receipt"></i>
+                    <p>No transactions found</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========== RECURRING VIEW ========== -->
+        <section class="view" id="view-recurring">
+            <h1 class="page-title">Recurring / Auto-Debits</h1>
+            <div class="card form-card">
+                <h3>Add Recurring Item</h3>
+                <form id="recurringForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Name *</label>
+                            <input type="text" id="recName" placeholder="e.g., SIP - Axis Bluechip" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Amount (₹) *</label>
+                            <input type="number" id="recAmount" placeholder="0" required min="1">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Category *</label>
+                            <select id="recCategory" required>
+                                <option value="">Select Category</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Account *</label>
+                            <select id="recAccount" required>
+                                <option value="Account 2">Account 2 (Main)</option>
+                                <option value="Account 1">Account 1 (Daily Use)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Frequency *</label>
+                            <select id="recFrequency" required>
+                                <option value="Monthly">Monthly</option>
+                                <option value="Quarterly">Quarterly</option>
+                                <option value="Yearly">Yearly</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Debit Day of Month *</label>
+                            <input type="number" id="recDebitDay" min="1" max="31" placeholder="e.g., 5" required>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-plus"></i> Add Recurring</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card">
+                <h3>Active Recurring Items</h3>
+                <div class="recurring-items-list" id="recurringList"></div>
+                <div class="empty-state" id="noRecurring" style="display:none;">
+                    <i class="fas fa-repeat"></i>
+                    <p>No recurring items added yet</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========== BUDGETS VIEW ========== -->
+        <section class="view" id="view-budgets">
+            <h1 class="page-title">Budgets</h1>
+            <div class="month-selector">
+                <button id="budgetPrevMonth"><i class="fas fa-chevron-left"></i></button>
+                <span id="budgetCurrentMonth"></span>
+                <button id="budgetNextMonth"><i class="fas fa-chevron-right"></i></button>
+            </div>
+            <div class="card form-card">
+                <h3>Set Budget</h3>
+                <form id="budgetForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Category *</label>
+                            <select id="budgetCategory" required>
+                                <option value="">Select Category</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Budget Amount (₹) *</label>
+                            <input type="number" id="budgetAmount" placeholder="0" required min="1">
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-bullseye"></i> Set Budget</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card">
+                <h3>Budget Progress</h3>
+                <div class="budget-list" id="budgetList"></div>
+                <div class="empty-state" id="noBudgets" style="display:none;">
+                    <i class="fas fa-bullseye"></i>
+                    <p>No budgets set for this month</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========== REPORTS VIEW ========== -->
+        <section class="view" id="view-reports">
+            <h1 class="page-title">Reports & Analytics</h1>
+            <div class="month-selector">
+                <button id="reportPrevMonth"><i class="fas fa-chevron-left"></i></button>
+                <span id="reportCurrentMonth"></span>
+                <button id="reportNextMonth"><i class="fas fa-chevron-right"></i></button>
+            </div>
+            <div class="cards-row">
+                <div class="card chart-card">
+                    <h3>Category Breakdown</h3>
+                    <canvas id="reportCategoryChart"></canvas>
+                </div>
+                <div class="card chart-card">
+                    <h3>Income vs Expenses (Last 6 Months)</h3>
+                    <canvas id="reportTrendChart"></canvas>
+                </div>
+            </div>
+            <div class="cards-row">
+                <div class="card chart-card">
+                    <h3>Account-wise Expenses</h3>
+                    <canvas id="reportAccountChart"></canvas>
+                </div>
+                <div class="card chart-card">
+                    <h3>Payment Mode Distribution</h3>
+                    <canvas id="reportPaymentChart"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Top 5 Expenses This Month</h3>
+                <div class="transaction-list" id="topExpenses"></div>
+            </div>
+        </section>
+
+        <!-- ========== SETTINGS VIEW ========== -->
+        <section class="view" id="view-settings">
+            <h1 class="page-title">Settings</h1>
+            <div class="card form-card">
+                <h3>Account Settings</h3>
+                <form id="settingsForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Account 1 Name</label>
+                            <input type="text" id="settAcc1Name" placeholder="Account 1">
+                        </div>
+                        <div class="form-group">
+                            <label>Account 1 Opening Balance (₹)</label>
+                            <input type="number" id="settAcc1Balance" placeholder="0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Account 2 Name</label>
+                            <input type="text" id="settAcc2Name" placeholder="Account 2">
+                        </div>
+                        <div class="form-group">
+                            <label>Account 2 Opening Balance (₹)</label>
+                            <input type="number" id="settAcc2Balance" placeholder="0">
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Settings</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card form-card">
+                <h3>Data Management</h3>
+                <div class="form-actions">
+                    <button class="btn btn-primary" id="exportData"><i class="fas fa-download"></i> Export Data (JSON)</button>
+                    <label class="btn btn-secondary" for="importFile"><i class="fas fa-upload"></i> Import Data
+                        <input type="file" id="importFile" accept=".json" style="display:none;">
+                    </label>
+                    <button class="btn btn-danger" id="clearData"><i class="fas fa-trash"></i> Clear All Data</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-overlay" id="deleteModal">
+        <div class="modal">
+            <h3>Confirm Delete</h3>
+            <p>Are you sure you want to delete this item?</p>
+            <div class="modal-actions">
+                <button class="btn btn-danger" id="confirmDelete">Delete</button>
+                <button class="btn btn-secondary" id="cancelDelete">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/data.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

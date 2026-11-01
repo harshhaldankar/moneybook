@@ -1,0 +1,14 @@
+{
+    "name": "MoneyBook - Expense & Savings Manager",
+    "short_name": "MoneyBook",
+    "description": "Track multiple bank accounts, spending and monthly savings targets.",
+    "start_url": "./index.html",
+    "scope": "./",
+    "display": "standalone",
+    "orientation": "portrait",
+    "background_color": "#f3f5f8",
+    "theme_color": "#1f5fae",
+    "icons": [
+        { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    ]
+}

@@ -1,0 +1,6 @@
+TransactionID,Date,Amount,Account,Type,Category,SubCategory,PaymentMode,Note,IsRecurring
+TXN001,2026-11-01,75000,"Account 2","Income","Salary","Monthly Salary","NetBanking","November 2026 Salary Credit","Y"
+TXN002,2026-11-01,15000,"Account 2","Transfer","Transfers","Account Transfer","NetBanking","Monthly allowance transfer from Account 2 to Account 1","N"
+TXN003,2026-11-02,5000,"Account 2","Expense","Investments","Mutual Fund SIP","AutoDebit","HDFC Top 100 Index Fund SIP","Y"
+TXN004,2026-11-02,350,"Account 1","Expense","Food & Dining","Groceries","UPI","Daily groceries from superstore","N"
+TXN005,2026-11-03,120,"Account 1","Expense","Transport","Auto Rickshaw","UPI","Metro station auto commute","N"

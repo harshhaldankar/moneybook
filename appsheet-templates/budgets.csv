@@ -1,0 +1,6 @@
+BudgetID,Month,Category,BudgetAmount,Notes
+BUD001,"2026-11","Food & Dining",8000,"Monthly budget for groceries, cafes, and dining out"
+BUD002,"2026-11","Transport",3000,"Monthly budget for fuel, cab rides, and metro fares"
+BUD003,"2026-11","Shopping",5000,"Monthly allocation for clothing, electronics, and personal items"
+BUD004,"2026-11","Entertainment",2000,"Budget for movies, weekend events, and outings"
+BUD005,"2026-11","Rent & Utilities",25000,"Fixed budget for house rent and utility payments"

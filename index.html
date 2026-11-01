@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1f5fae">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>MoneyBook</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icons/icon.svg">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+    <!-- ========== LOGIN / SIGN UP ========== -->
+    <div class="auth-screen" id="authScreen">
+        <div class="auth-card">
+            <div class="auth-brand">
+                <div class="auth-logo"><i class="fas fa-wallet"></i></div>
+                <h1>MoneyBook</h1>
+                <p>Your accounts, spending &amp; savings, in one place</p>
+            </div>
+
+            <div class="auth-tabs">
+                <button class="auth-tab active" data-auth="login">Login</button>
+                <button class="auth-tab" data-auth="signup">New User</button>
+            </div>
+
+            <form id="loginForm" class="auth-form">
+                <div class="saved-users" id="savedUsers"></div>
+                <div class="form-group">
+                    <label for="loginUser">User ID</label>
+                    <input type="text" id="loginUser" autocomplete="username" autocapitalize="none" required>
+                </div>
+                <div class="form-group">
+                    <label for="loginPass">Password</label>
+                    <div class="password-field">
+                        <input type="password" id="loginPass" autocomplete="current-password" required>
+                        <button type="button" class="pw-toggle" aria-label="Show password"><i class="fas fa-eye"></i></button>
+                    </div>
+                </div>
+                <p class="auth-error" id="loginError"></p>
+                <button type="submit" class="btn btn-primary btn-block">Login <i class="fas fa-arrow-right"></i></button>
+            </form>
+
+            <form id="signupForm" class="auth-form" hidden>
+                <div class="form-group">
+                    <label for="signupName">Your Name</label>
+                    <input type="text" id="signupName" placeholder="e.g., Harsh" required>
+                </div>
+                <div class="form-group">
+                    <label for="signupUser">Choose a User ID</label>
+                    <input type="text" id="signupUser" placeholder="e.g., harsh01" autocomplete="username" autocapitalize="none" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="signupPass">Password</label>
+                        <input type="password" id="signupPass" autocomplete="new-password" minlength="6" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="signupPass2">Confirm Password</label>
+                        <input type="password" id="signupPass2" autocomplete="new-password" minlength="6" required>
+                    </div>
+                </div>
+                <label class="check-row" id="legacyImportRow" hidden>
+                    <input type="checkbox" id="legacyImport" checked>
+                    <span>Bring over data from the previous version of this app</span>
+                </label>
+                <p class="auth-note"><i class="fas fa-lock"></i> Your data is encrypted with your password. If you forget it, the data can't be recovered, so keep a backup from <b>More → Profile</b>.</p>
+                <p class="auth-error" id="signupError"></p>
+                <button type="submit" class="btn btn-primary btn-block">Create Account <i class="fas fa-user-plus"></i></button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========== APP SHELL ========== -->
+    <div class="app" id="app" hidden>
+        <nav class="nav-rail" id="navRail">
+            <div class="rail-brand"><i class="fas fa-wallet"></i> <span>MoneyBook</span></div>
+            <a href="#" class="nav-item active" data-view="home"><i class="fas fa-house"></i><span>Home</span></a>
+            <a href="#" class="nav-item" data-view="activity"><i class="fas fa-list-ul"></i><span>Activity</span></a>
+            <button class="nav-add" data-action="add-txn" aria-label="Add transaction"><i class="fas fa-plus"></i><span>Add</span></button>
+            <a href="#" class="nav-item" data-view="savings"><i class="fas fa-piggy-bank"></i><span>Savings</span></a>
+            <a href="#" class="nav-item" data-view="more"><i class="fas fa-grip"></i><span>More</span></a>
+        </nav>
+
+        <div class="app-main">
+            <header class="app-bar">
+                <button class="icon-btn" id="backBtn" hidden aria-label="Back"><i class="fas fa-arrow-left"></i></button>
+                <h1 id="appTitle">Home</h1>
+                <div class="app-bar-actions">
+                    <button class="icon-btn" id="lockBtn" title="Lock" aria-label="Lock app"><i class="fas fa-lock"></i></button>
+                    <button class="avatar" id="avatarBtn" title="Profile" aria-label="Profile"></button>
+                </div>
+            </header>
+
+            <main class="content" id="content">
+                <section class="view" id="view-home"></section>
+                <section class="view" id="view-activity"></section>
+                <section class="view" id="view-savings"></section>
+                <section class="view" id="view-more"></section>
+                <section class="view" id="view-accounts"></section>
+                <section class="view" id="view-budgets"></section>
+                <section class="view" id="view-recurring"></section>
+                <section class="view" id="view-reports"></section>
+                <section class="view" id="view-profile"></section>
+            </main>
+        </div>
+    </div>
+
+    <!-- Bottom sheet for all forms -->
+    <div class="sheet-overlay" id="sheetOverlay">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+            <div class="sheet-handle"></div>
+            <div class="sheet-header">
+                <h2 id="sheetTitle"></h2>
+                <button class="icon-btn" id="sheetClose" aria-label="Close"><i class="fas fa-xmark"></i></button>
+            </div>
+            <div class="sheet-body" id="sheetBody"></div>
+        </div>
+    </div>
+
+    <!-- Confirm dialog -->
+    <div class="modal-overlay" id="confirmModal">
+        <div class="modal">
+            <h3 id="confirmTitle">Are you sure?</h3>
+            <p id="confirmText"></p>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="confirmCancel">Cancel</button>
+                <button class="btn btn-danger" id="confirmOk">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast" role="status"></div>
+
+    <script src="js/data.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

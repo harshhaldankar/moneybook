@@ -1,0 +1,6 @@
+RecurringID,Name,Amount,Category,Account,Frequency,DebitDate,IsActive,Notes
+REC001,"HDFC Top 100 Index Fund SIP",5000,"Investments","Account 2","Monthly",2,"Y","Monthly mutual fund SIP auto-debit"
+REC002,"Netflix Premium Plan",649,"Subscriptions","Account 2","Monthly",15,"Y","Monthly 4K streaming plan"
+REC003,"Apartment Rent",20000,"Rent & Utilities","Account 2","Monthly",5,"Y","Monthly house rent payment"
+REC004,"Fiber Broadband Internet",999,"Rent & Utilities","Account 1","Monthly",10,"Y","High-speed unlimited broadband bill"
+REC005,"Health Insurance Premium",12500,"Health","Account 2","Yearly",20,"Y","Annual family mediclaim policy"

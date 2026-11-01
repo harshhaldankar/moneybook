@@ -1,0 +1,4 @@
+AccountID,AccountName,BankName,AccountType,OpeningBalance,CurrentBalance,Notes
+ACC001,"Account 1","State Bank of India","Savings",5000,4530,"Daily expense and UPI account"
+ACC002,"Account 2","HDFC Bank","Salary",50000,105000,"Main salary and investment account"
+ACC003,"Cash Wallet","Cash","Cash",2000,1500,"Physical cash for small daily expenses"
