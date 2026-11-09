@@ -1,0 +1,12 @@
+{
+  "appId": "in.moneybook.app",
+  "appName": "MoneyBook",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true },
+    "LocalNotifications": { "smallIcon": "ic_stat_moneybook", "iconColor": "#1f5fae" }
+  }
+}

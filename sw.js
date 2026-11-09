@@ -1,7 +1,7 @@
 /* Offline support: cache the app shell, serve it when there's no network. */
-const CACHE = 'moneybook-v2';
+const CACHE = 'moneybook-v3';
 const SHELL = [
-    './', './index.html', './css/style.css', './js/data.js', './js/app.js', './manifest.json', './icons/icon.svg',
+    './', './index.html', './css/style.css', './js/data.js', './js/native.js', './js/app.js', './manifest.json', './icons/icon.svg',
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css',
     'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
 ];

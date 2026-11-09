@@ -6,8 +6,10 @@ const TOP_VIEWS = ['home', 'activity', 'savings', 'more'];
 const VIEW_TITLES = {
     home: 'Home', activity: 'Activity', savings: 'Savings', more: 'More',
     accounts: 'Bank Accounts', budgets: 'Budgets', recurring: 'Auto-Debits', reports: 'Reports', profile: 'Profile & Security',
+    automation: 'Auto-Capture & Reminders',
 };
 const IDLE_LOCK_MS = 10 * 60 * 1000;
+const SYNC_INTERVAL_MS = 60 * 1000;
 
 class App {
     constructor() {
@@ -16,20 +18,33 @@ class App {
         this.filters = { account: 'all', type: 'all', search: '' };
         this.charts = {};
         this.idleTimer = null;
+        this.pendingCaptures = [];
     }
 
-    get data() { return Vault.data; }
+    get data() { return Store.data; }
 
     async init() {
         this.bindAuth();
         this.bindShell();
-        if (!Vault.isSupported()) {
-            this.showAuthError('loginError', 'This browser blocks secure storage. Open the app over https:// (e.g. GitHub Pages) or from a local file.');
-        }
-        if (await Vault.restoreSession()) this.enterApp();
-        else this.showAuth();
+        Store.onStateChange = () => this.renderSyncState();
+        Store.onChange = () => { this.render(); Native.scheduleReminders(this.data); };
+        Store.onAuthError = () => { Store.forget(); this.showAuth(); this.toast('Session expired. Please log in again.', 'error'); };
 
-        if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+        // A shared link like ...?api=<web app url> sets up the Sheet connection for family members
+        const apiParam = new URLSearchParams(location.search).get('api');
+        if (apiParam && Api.isValidUrl(apiParam)) {
+            Api.url = apiParam;
+            history.replaceState(null, '', location.pathname);
+        }
+
+        await Native.init(this);
+        if (Store.resume()) this.enterApp();
+        else this.showAuth(localStorage.getItem(Store.CURRENT_KEY) || '');
+
+        setInterval(() => { if (Store.userId && document.visibilityState === 'visible') Store.flush(); }, SYNC_INTERVAL_MS);
+        window.addEventListener('online', () => Store.flush());
+
+        if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !Native.isNative) {
             navigator.serviceWorker.register('sw.js').catch(() => {});
         }
     }
@@ -44,14 +59,42 @@ class App {
             btn.innerHTML = `<i class="fas fa-eye${input.type === 'password' ? '' : '-slash'}"></i>`;
         }));
 
+        document.getElementById('connectForm').addEventListener('submit', async e => {
+            e.preventDefault();
+            const url = document.getElementById('apiUrl').value.trim();
+            this.showAuthError('connectError', '');
+            if (!Api.isValidUrl(url)) {
+                this.showAuthError('connectError', 'That doesn\'t look like an Apps Script web app link (it starts with https://script.google.com/macros/s/)');
+                return;
+            }
+            await this.withBusy(e.target.querySelector('button[type=submit]'), 'Connecting…', async () => {
+                const previous = Api.url;
+                try {
+                    Api.url = url;
+                    await Api.call('ping');
+                    this.toast('Google Sheet connected', 'success');
+                    this.showAuth();
+                } catch (err) {
+                    Api.url = previous;
+                    this.showAuthError('connectError', err.message);
+                }
+            });
+        });
+        document.getElementById('changeServer').addEventListener('click', () => this.showConnect(true));
+        document.getElementById('connectCancel').addEventListener('click', () => this.showAuth());
+
         document.getElementById('loginForm').addEventListener('submit', async e => {
             e.preventDefault();
             const btn = e.target.querySelector('button[type=submit]');
+            const user = document.getElementById('loginUser').value;
+            const pass = document.getElementById('loginPass').value;
             this.showAuthError('loginError', '');
             await this.withBusy(btn, 'Checking…', async () => {
                 try {
-                    await Vault.signIn(document.getElementById('loginUser').value, document.getElementById('loginPass').value);
+                    // Already logged in on this device → unlock offline; otherwise ask the Sheet
+                    if (!await Store.unlock(user, pass)) await Store.login(user, pass);
                     this.enterApp();
+                    Store.flush();
                 } catch (err) {
                     this.showAuthError('loginError', err.message);
                 }
@@ -68,11 +111,9 @@ class App {
                 return;
             }
             this.showAuthError('signupError', '');
-            const useLegacy = Legacy.exists() && document.getElementById('legacyImport').checked;
             await this.withBusy(btn, 'Creating…', async () => {
                 try {
-                    await Vault.signUp(document.getElementById('signupUser').value, name, pass, useLegacy ? Legacy.toUserData(name) : null);
-                    if (useLegacy) Legacy.clear();
+                    await Store.register(document.getElementById('signupUser').value, name, pass);
                     this.enterApp();
                     if (!this.data.accounts.length) this.openAccountSheet(null, true);
                 } catch (err) {
@@ -99,28 +140,40 @@ class App {
         document.getElementById(id).textContent = msg;
     }
 
+    showConnect(canCancel = false) {
+        document.getElementById('connectForm').hidden = false;
+        document.getElementById('apiUrl').value = Api.url;
+        document.getElementById('connectCancel').hidden = !canCancel;
+        ['authTabs', 'loginForm', 'signupForm', 'serverLine'].forEach(id => { document.getElementById(id).hidden = true; });
+    }
+
     showAuth(prefillUser = '') {
         document.getElementById('app').hidden = true;
         document.getElementById('authScreen').hidden = false;
         this.closeSheet();
         document.querySelectorAll('.auth-form').forEach(f => f.reset());
-        const users = Vault.getUsers();
-        const ids = Object.keys(users);
+        if (!Api.url) { this.showConnect(); return; }
+        document.getElementById('connectForm').hidden = true;
+        document.getElementById('authTabs').hidden = false;
+        document.getElementById('serverLine').hidden = false;
+
+        const sessions = Store.getSessions();
+        const ids = Object.keys(sessions);
         document.getElementById('savedUsers').innerHTML = ids.length ? `
             <span class="saved-users-label">On this device</span>
             <div class="saved-users-list">${ids.map(id => `
                 <button type="button" class="user-chip" data-user="${escapeHtml(id)}">
-                    <span class="avatar sm">${escapeHtml(this.initials(users[id].displayName))}</span>
-                    <span><b>${escapeHtml(users[id].displayName)}</b><small>@${escapeHtml(id)}</small></span>
+                    <span class="avatar sm">${escapeHtml(this.initials(sessions[id].displayName))}</span>
+                    <span><b>${escapeHtml(sessions[id].displayName)}</b><small>@${escapeHtml(id)}</small></span>
                 </button>`).join('')}
             </div>` : '';
         document.querySelectorAll('.user-chip').forEach(chip => chip.addEventListener('click', () => {
             document.getElementById('loginUser').value = chip.dataset.user;
             document.getElementById('loginPass').focus();
         }));
-        document.getElementById('legacyImportRow').hidden = !Legacy.exists();
         this.switchAuthTab(ids.length ? 'login' : 'signup');
         if (prefillUser) {
+            this.switchAuthTab('login');
             document.getElementById('loginUser').value = prefillUser;
             document.getElementById('loginPass').focus();
         }
@@ -132,31 +185,52 @@ class App {
         document.getElementById('avatarBtn').textContent = this.initials(this.data.profile.displayName);
         this.month = currentMonthKey();
         this.navigate('home');
+        this.renderSyncState();
         this.resetIdleTimer();
+        Store.flush();
+        Native.onLogin(this.data);
+        if (Store.importedPrevious) {
+            Store.importedPrevious = false;
+            this.toast('Your earlier data was moved into the Google Sheet', 'success');
+        }
     }
 
     lock() {
-        const user = Vault.username;
-        Vault.signOut();
+        const user = Store.userId;
+        Store.lock();
         this.destroyCharts();
         this.showAuth(user);
         this.toast('Locked. Enter your password to continue.');
     }
 
     logout() {
-        Vault.signOut();
+        Store.lock();
+        localStorage.removeItem(Store.CURRENT_KEY);
         this.destroyCharts();
         this.showAuth();
     }
 
     resetIdleTimer() {
         clearTimeout(this.idleTimer);
-        if (!Vault.username) return;
+        if (!Store.userId || this.data.settings.lockOnOpen === false) return;
         this.idleTimer = setTimeout(() => this.lock(), IDLE_LOCK_MS);
     }
 
     initials(name) {
         return String(name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+    }
+
+    renderSyncState() {
+        const btn = document.getElementById('syncBtn');
+        const badge = document.getElementById('syncBadge');
+        if (!btn || !Store.userId) return;
+        const pending = Store.pendingCount();
+        const icons = { syncing: 'fa-rotate fa-spin', offline: 'fa-cloud-arrow-up', error: 'fa-triangle-exclamation', idle: 'fa-cloud' };
+        btn.querySelector('i').className = `fas ${icons[Store.syncState] || 'fa-cloud'}`;
+        btn.title = Store.syncState === 'offline' ? `Offline · ${pending} change${pending === 1 ? '' : 's'} waiting to sync`
+            : Store.syncState === 'error' ? 'Sync problem · tap to retry' : Store.syncState === 'syncing' ? 'Syncing…' : 'Synced with Google Sheet';
+        badge.hidden = !pending;
+        badge.textContent = pending;
     }
 
     /* ========== SHELL / NAVIGATION ========== */
@@ -167,6 +241,7 @@ class App {
         }));
         document.getElementById('backBtn').addEventListener('click', () => this.navigate('more'));
         document.getElementById('lockBtn').addEventListener('click', () => this.lock());
+        document.getElementById('syncBtn').addEventListener('click', () => { Store.flush(); this.toast(Store.syncState === 'offline' ? 'Offline. Changes will sync when you\'re back online.' : 'Syncing with Google Sheet…'); });
         document.getElementById('avatarBtn').addEventListener('click', () => this.navigate('profile'));
         document.getElementById('sheetClose').addEventListener('click', () => this.closeSheet());
         document.getElementById('sheetOverlay').addEventListener('click', e => { if (e.target.id === 'sheetOverlay') this.closeSheet(); });
@@ -176,7 +251,7 @@ class App {
         // One delegated handler for every [data-action] in the app and sheet
         document.addEventListener('click', e => {
             const el = e.target.closest('[data-action]');
-            if (!el || !Vault.data) return;
+            if (!el || !Store.data) return;
             e.preventDefault();
             this.handleAction(el.dataset.action, el.dataset, el);
         });
@@ -195,18 +270,22 @@ class App {
     }
 
     render() {
-        if (!Vault.data) return;
+        if (!Store.data) return;
         const renderers = {
             home: () => this.renderHome(), activity: () => this.renderActivity(), savings: () => this.renderSavings(),
             more: () => this.renderMore(), accounts: () => this.renderAccounts(), budgets: () => this.renderBudgets(),
             recurring: () => this.renderRecurring(), reports: () => this.renderReports(), profile: () => this.renderProfile(),
+            automation: () => this.renderAutomation(),
         };
         renderers[this.view]();
     }
 
     async persist(message) {
-        await Vault.save();
+        await Store.save();
         this.render();
+        this.renderSyncState();
+        Native.scheduleReminders(this.data);
+        Native.checkBudgetAlerts(this.data);
         if (message) this.toast(message, 'success');
     }
 
@@ -234,6 +313,14 @@ class App {
             'export-csv': () => this.exportCsv(),
             'import': () => document.getElementById('importFile').click(),
             'delete-profile': () => this.openDeleteProfileSheet(),
+            'review-capture': () => this.openTxnSheet(null, 'Expense', this.pendingCaptures.find(c => c.captureId === ds.id)),
+            'save-capture': () => this.quickSaveCapture(ds.id),
+            'ignore-capture': () => this.ignoreCapture(ds.id),
+            'enable-sms': () => Native.enableSms().then(() => this.render()),
+            'enable-upi': () => Native.openNotificationAccess(),
+            'enable-notifications': () => Native.requestNotificationPermission().then(() => this.render()),
+            'test-notification': () => Native.testNotification(),
+            'copy-share-link': () => this.copyShareLink(),
             'lock': () => this.lock(),
             'logout': () => this.logout(),
         };
@@ -279,6 +366,8 @@ class App {
 
         el.innerHTML = `
             <p class="greeting">Hi ${firstName} 👋</p>
+
+            ${this.capturesCard()}
 
             <div class="card hero-card">
                 <span class="hero-label">Total Balance</span>
@@ -339,6 +428,146 @@ class App {
                 </div>
                 ${this.txnListHtml([...d.transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 6), false)}
             </div>`;
+    }
+
+    /* ========== DETECTED TRANSACTIONS (bank SMS / UPI apps) ========== */
+    async loadCaptures() {
+        if (!Store.data) return;
+        const raw = await Native.getCaptures();
+        const known = new Set(this.data.transactions.map(t => t.captureId).filter(Boolean));
+        this.pendingCaptures = raw.filter(c => !known.has(c.id)).map(c => Capture.toDraft(this.data, c));
+        // Merchants you've categorised before (and a matched account) can be saved without asking
+        if (this.data.settings.autoSaveKnown) {
+            const ready = this.pendingCaptures.filter(c => c.learned && c.accountId);
+            if (ready.length) {
+                ready.forEach(c => this.data.transactions.push(this.draftToTxn(c)));
+                await this.resolveCaptures(ready.map(c => c.captureId), false);
+                await this.persist(`${ready.length} detected transaction${ready.length === 1 ? '' : 's'} saved automatically`);
+                return;
+            }
+        }
+        if (this.view === 'home') this.render();
+    }
+
+    draftToTxn(c) {
+        return {
+            id: generateId(), type: c.type, amount: c.amount, date: c.date, accountId: c.accountId,
+            category: c.category, paymentMode: c.paymentMode, note: c.note, source: c.source,
+        };
+    }
+
+    async resolveCaptures(ids, rerender = true) {
+        await Native.removeCaptures(ids);
+        this.pendingCaptures = this.pendingCaptures.filter(c => !ids.includes(c.captureId));
+        if (rerender && this.view === 'home') this.render();
+    }
+
+    async ignoreCapture(id) {
+        await this.resolveCaptures([id]);
+        this.toast('Ignored');
+    }
+
+    async quickSaveCapture(id) {
+        const c = this.pendingCaptures.find(x => x.captureId === id);
+        if (!c) return;
+        if (!c.category || !c.accountId) { this.openTxnSheet(null, 'Expense', c); return; }
+        this.data.transactions.push(this.draftToTxn(c));
+        Capture.learn(this.data, c.note, c.category);
+        await this.resolveCaptures([id], false);
+        await this.persist(`${c.type} of ${formatCurrency(c.amount)} saved`);
+    }
+
+    capturesCard() {
+        const list = this.pendingCaptures;
+        if (!list.length) return '';
+        return `
+            <div class="card capture-card">
+                <div class="card-header">
+                    <h3><i class="fas fa-wand-magic-sparkles"></i> ${list.length} detected transaction${list.length === 1 ? '' : 's'}</h3>
+                </div>
+                ${list.slice(0, 5).map(c => {
+                    const acc = c.accountId ? this.accountName(c.accountId) : (c.last4 ? `••${c.last4} (unknown)` : 'Pick account');
+                    const cat = c.category ? getCategory(c.category).name : 'Pick category';
+                    const ready = c.category && c.accountId;
+                    return `
+                    <div class="capture-row">
+                        <button class="rec-info" data-action="review-capture" data-id="${escapeHtml(c.captureId)}">
+                            <span class="txn-icon ${c.type.toLowerCase()}"><i class="${c.category ? getCategory(c.category).icon : 'fas fa-question'}"></i></span>
+                            <span class="txn-main">
+                                <b>${escapeHtml(c.note || (c.type === 'Income' ? 'Money received' : 'Payment'))}</b>
+                                <small>${escapeHtml(cat)} · ${escapeHtml(acc)} · ${formatDate(c.date)}</small>
+                            </span>
+                            <span class="txn-amt ${c.type === 'Income' ? 'income-c' : 'expense-c'}">${c.type === 'Income' ? '+' : '-'}${formatCurrency(c.amount)}</span>
+                        </button>
+                        <div class="capture-actions">
+                            <button class="chip-btn" data-action="${ready ? 'save-capture' : 'review-capture'}" data-id="${escapeHtml(c.captureId)}"><i class="fas ${ready ? 'fa-check' : 'fa-pen'}"></i> ${ready ? 'Save' : 'Review'}</button>
+                            <button class="icon-btn sm" data-action="ignore-capture" data-id="${escapeHtml(c.captureId)}" aria-label="Ignore"><i class="fas fa-xmark"></i></button>
+                        </div>
+                    </div>`;
+                }).join('')}
+                ${list.length > 5 ? `<p class="hint">+ ${list.length - 5} more after these</p>` : ''}
+            </div>`;
+    }
+
+    /* ========== AUTOMATION SETTINGS ========== */
+    bindSettingToggles(viewId) {
+        document.querySelectorAll(`#${viewId} [data-setting]`).forEach(input => input.addEventListener('change', async () => {
+            const key = input.dataset.setting;
+            this.data.settings[key] = input.type === 'checkbox' ? input.checked : input.value;
+            if (key === 'lockOnOpen') this.resetIdleTimer();
+            await this.persist('Saved');
+        }));
+    }
+
+    async renderAutomation() {
+        const s = this.data.settings;
+        const status = await Native.status();
+        const el = document.getElementById('view-automation');
+        const toggle = (key, icon, title, sub, extra = '') => `
+            <label class="menu-item toggle-row"><span class="menu-icon"><i class="${icon}"></i></span><span class="menu-text"><b>${title}</b><small>${sub}</small>${extra}</span><input type="checkbox" class="switch" data-setting="${key}" ${s[key] ? 'checked' : ''}></label>`;
+        const statusRow = (on, icon, title, sub, action, label) => `
+            <div class="menu-item"><span class="menu-icon"><i class="${icon}"></i></span><span class="menu-text"><b>${title}</b><small>${sub}</small></span>
+            ${on ? '<span class="badge good"><i class="fas fa-check"></i> On</span>' : `<button class="chip-btn" data-action="${action}">${label}</button>`}</div>`;
+        const noLast4 = this.data.accounts.filter(a => !a.archived && !a.last4).length;
+        const family = `
+            <div class="card flush menu">
+                <div class="card-header padded"><h3>Family</h3></div>
+                <button class="menu-item" data-action="copy-share-link"><span class="menu-icon"><i class="fas fa-link"></i></span><span class="menu-text"><b>${Native.isNative ? 'Copy Google Sheet link' : 'Copy family invite link'}</b><small>${Native.isNative ? 'Family members paste it on the Connect screen, then create their own login' : 'Opens MoneyBook already connected to your Google Sheet'}</small></span></button>
+            </div>`;
+
+        el.innerHTML = Native.isNative ? `
+            <div class="card flush menu">
+                <div class="card-header padded"><h3>Auto-capture</h3></div>
+                ${statusRow(status.sms, 'fas fa-comment-sms', 'Bank SMS', 'Reads only debit/credit SMS from bank senders. OTPs and personal messages are ignored and never stored.', 'enable-sms', 'Turn on')}
+                ${statusRow(status.upi, 'fas fa-bell', 'UPI app alerts', 'Payment notifications from GPay, PhonePe, Paytm, BHIM and bank apps.', 'enable-upi', 'Allow access')}
+                ${toggle('autoSaveKnown', 'fas fa-bolt', 'Save known merchants automatically', 'Skips the review step when you have categorised that merchant before')}
+            </div>
+            ${noLast4 ? `<div class="card tint-warn"><div class="overall"><i class="fas fa-circle-info"></i><div><b>Add last 4 digits to ${noLast4} account${noLast4 === 1 ? '' : 's'}</b><small>So detected SMS land in the right account. <button class="link-btn" data-action="go" data-view="accounts">Open accounts →</button></small></div></div></div>` : ''}
+            <div class="card flush menu">
+                <div class="card-header padded"><h3>Reminders</h3></div>
+                ${statusRow(status.notifications, 'fas fa-bell', 'Notifications', 'Needed for reminders and detected-transaction alerts', 'enable-notifications', 'Allow')}
+                ${toggle('dailyReminder', 'fas fa-clock', 'Daily reminder', 'Nudge to log cash spends', `<input type="time" class="time-input" data-setting="reminderTime" value="${escapeHtml(s.reminderTime || '21:00')}">`)}
+                ${toggle('dueReminders', 'fas fa-calendar-day', 'Auto-debit reminders', 'The day before each SIP, EMI, rent or subscription')}
+                ${toggle('budgetAlerts', 'fas fa-chart-simple', 'Budget alerts', 'When a category reaches 80% and 100% of its budget')}
+                <button class="menu-item" data-action="test-notification"><span class="menu-icon"><i class="fas fa-paper-plane"></i></span><span class="menu-text"><b>Send a test notification</b></span></button>
+            </div>
+            ${family}` : `
+            <div class="card">
+                <h3><i class="fas fa-mobile-screen"></i> Get the Android app</h3>
+                <p class="hint">Auto-capture from bank SMS and UPI apps, and reminder notifications, work in the MoneyBook Android app. Download the APK from the <a href="https://github.com/harshhaldankar/moneybook/releases/latest" target="_blank" rel="noopener">latest release</a>, then log in with the same User ID. Your data syncs through the Google Sheet.</p>
+            </div>
+            ${family}`;
+        this.bindSettingToggles('view-automation');
+    }
+
+    async copyShareLink() {
+        const link = Native.isNative ? Api.url : `${location.origin}${location.pathname}?api=${encodeURIComponent(Api.url)}`;
+        try {
+            await navigator.clipboard.writeText(link);
+            this.toast('Link copied', 'success');
+        } catch {
+            this.openSheet('Share link', `<div class="sheet-form"><p class="hint">Copy this link:</p><input type="text" value="${escapeHtml(link)}" readonly onfocus="this.select()"></div>`);
+        }
     }
 
     targetBlock(s) {
@@ -597,10 +826,11 @@ class App {
         document.getElementById('view-more').innerHTML = `
             <div class="card profile-card" data-action="go" data-view="profile">
                 <span class="avatar lg">${escapeHtml(this.initials(d.profile.displayName))}</span>
-                <div><b>${escapeHtml(d.profile.displayName)}</b><small>@${escapeHtml(Vault.username)}</small></div>
+                <div><b>${escapeHtml(d.profile.displayName)}</b><small>@${escapeHtml(Store.userId)}</small></div>
                 <i class="fas fa-chevron-right"></i>
             </div>
             <div class="card flush menu">
+                ${item('automation', 'fas fa-wand-magic-sparkles', 'Auto-Capture & Reminders', Native.isNative ? 'Bank SMS, UPI alerts, notifications' : 'Reminders and setup for the Android app')}
                 ${item('accounts', 'fas fa-building-columns', 'Bank Accounts', `${this.activeAccounts().length} active · add, edit, set main`)}
                 ${item('budgets', 'fas fa-chart-simple', 'Budgets', 'Monthly limits per category')}
                 ${item('recurring', 'fas fa-repeat', 'Auto-Debits', 'SIPs, EMIs, rent, subscriptions')}
@@ -737,7 +967,7 @@ class App {
                         <small>${formatCurrency(r.amount)} · ${escapeHtml(this.accountName(r.accountId))} · ${r.isActive ? `${overdue ? '<span class="expense-c">Due</span>' : 'Next'} ${formatDate(due)}` : 'Paused'}</small>
                     </span>
                 </button>
-                ${r.isActive ? `<button class="chip-btn" data-action="pay-recurring" data-id="${r.id}"><i class="fas fa-check"></i> Paid</button>` : ''}
+                ${!r.isActive ? '' : r.autoPost ? `<span class="badge main" title="Recorded automatically on the debit day"><i class="fas fa-robot"></i> Auto</span>` : `<button class="chip-btn" data-action="pay-recurring" data-id="${r.id}"><i class="fas fa-check"></i> Paid</button>`}
             </div>`;
     }
 
@@ -755,7 +985,7 @@ class App {
                 ${list.length ? list.map(r => this.recurringRowHtml(r)).join('') : `<div class="empty-state"><i class="fas fa-repeat"></i><p>No auto-debits yet</p></div>`}
             </div>
             <button class="btn btn-primary btn-block" data-action="add-recurring"><i class="fas fa-plus"></i> Add Auto-Debit</button>
-            <p class="hint center">Tap <b>Paid</b> when it's debited — it's recorded as an expense in the right account.</p>`;
+            <p class="hint center"><b>Auto</b> items are recorded by the Google Sheet on their debit day. For the others, tap <b>Paid</b> when it's debited.</p>`;
     }
 
     async payRecurring(id) {
@@ -836,15 +1066,15 @@ class App {
     /* ========== PROFILE ========== */
     renderProfile() {
         const d = this.data;
-        const user = Vault.getUsers()[Vault.username];
         document.getElementById('view-profile').innerHTML = `
             <div class="card profile-card">
                 <span class="avatar lg">${escapeHtml(this.initials(d.profile.displayName))}</span>
-                <div><b>${escapeHtml(d.profile.displayName)}</b><small>User ID: @${escapeHtml(Vault.username)} · since ${formatDate(user.createdAt.slice(0, 10))}</small></div>
+                <div><b>${escapeHtml(d.profile.displayName)}</b><small>User ID: @${escapeHtml(Store.userId)}</small></div>
             </div>
             <div class="card flush menu">
                 <button class="menu-item" data-action="edit-name"><span class="menu-icon"><i class="fas fa-id-card"></i></span><span class="menu-text"><b>Change display name</b></span><i class="fas fa-chevron-right"></i></button>
-                <button class="menu-item" data-action="change-password"><span class="menu-icon"><i class="fas fa-key"></i></span><span class="menu-text"><b>Change password</b></span><i class="fas fa-chevron-right"></i></button>
+                <button class="menu-item" data-action="change-password"><span class="menu-icon"><i class="fas fa-key"></i></span><span class="menu-text"><b>Change password</b><small>Logs you out on other devices</small></span><i class="fas fa-chevron-right"></i></button>
+                <label class="menu-item toggle-row"><span class="menu-icon"><i class="fas fa-lock"></i></span><span class="menu-text"><b>Ask for password when opening</b><small>Also locks after 10 minutes idle</small></span><input type="checkbox" class="switch" data-setting="lockOnOpen" ${d.settings.lockOnOpen !== false ? 'checked' : ''}></label>
             </div>
             <div class="card flush menu">
                 <button class="menu-item" data-action="export"><span class="menu-icon"><i class="fas fa-download"></i></span><span class="menu-text"><b>Download backup (JSON)</b><small>Restore it on any device</small></span></button>
@@ -853,15 +1083,16 @@ class App {
                 <input type="file" id="importFile" accept=".json,application/json" hidden>
             </div>
             <div class="card flush menu">
-                <button class="menu-item danger" data-action="delete-profile"><span class="menu-icon"><i class="fas fa-user-xmark"></i></span><span class="menu-text"><b>Delete my profile</b><small>Removes your data from this device</small></span></button>
+                <button class="menu-item danger" data-action="delete-profile"><span class="menu-icon"><i class="fas fa-user-xmark"></i></span><span class="menu-text"><b>Remove from this device</b><small>Your data stays safe in the Google Sheet</small></span></button>
             </div>
-            <p class="hint center"><i class="fas fa-lock"></i> Data is stored on this device only, encrypted with your password.<br>Other users on this device cannot read it.</p>`;
+            <p class="hint center"><i class="fas fa-table"></i> Your data is saved in the connected Google Sheet and cached on this device for offline use.</p>`;
         document.getElementById('importFile').addEventListener('change', e => this.importData(e.target.files[0]));
+        this.bindSettingToggles('view-profile');
     }
 
     exportData() {
         const blob = new Blob([JSON.stringify({ app: 'MoneyBook', exportedAt: new Date().toISOString(), data: this.data }, null, 2)], { type: 'application/json' });
-        this.download(blob, `moneybook-${Vault.username}-${todayStr()}.json`);
+        this.download(blob, `moneybook-${Store.userId}-${todayStr()}.json`);
         this.toast('Backup downloaded', 'success');
     }
 
@@ -889,9 +1120,9 @@ class App {
             const parsed = JSON.parse(await file.text());
             const incoming = parsed.data || parsed;
             if (!Array.isArray(incoming.accounts) || !Array.isArray(incoming.transactions)) throw new Error('Not a MoneyBook backup file');
-            if (!await this.confirm('Restore backup?', `This replaces all data for @${Vault.username} with the backup (${incoming.transactions.length} transactions, ${incoming.accounts.length} accounts).`, 'Restore')) return;
+            if (!await this.confirm('Restore backup?', `This replaces all data for @${Store.userId} (also in the Google Sheet) with the backup (${incoming.transactions.length} transactions, ${incoming.accounts.length} accounts).`, 'Restore')) return;
             const base = emptyUserData(this.data.profile.displayName);
-            Vault.data = { ...base, ...incoming, settings: { ...base.settings, ...incoming.settings }, profile: { ...base.profile, ...incoming.profile } };
+            Store.data = { ...base, ...incoming, settings: { ...base.settings, ...incoming.settings }, profile: { ...base.profile, ...incoming.profile } };
             await this.persist('Backup restored');
         } catch (err) {
             this.toast(err.message || 'Could not read that file', 'error');
@@ -918,7 +1149,7 @@ class App {
     }
 
     /* --- Transaction sheet (Expense / Income / Transfer) --- */
-    openTxnSheet(txn, defaultType = 'Expense') {
+    openTxnSheet(txn, defaultType = 'Expense', draft = null) {
         const d = this.data;
         if (!this.activeAccounts().length) {
             this.toast('Add a bank account first', 'error');
@@ -933,21 +1164,22 @@ class App {
         const main = Calc.mainAccount(d);
         const last = d.settings.lastAccount || {};
         const state = {
-            type: txn?.type || defaultType,
-            category: txn?.category || null,
-            paymentMode: txn?.paymentMode || 'UPI',
+            type: txn?.type || draft?.type || defaultType,
+            category: txn?.category || draft?.category || null,
+            paymentMode: txn?.paymentMode || draft?.paymentMode || 'UPI',
         };
-        const accFor = type => txn?.accountId || (this.accountById(last[type]) && !this.accountById(last[type]).archived ? last[type] : main.id);
+        const accFor = type => txn?.accountId || draft?.accountId || (this.accountById(last[type]) && !this.accountById(last[type]).archived ? last[type] : main.id);
         const otherAccount = this.activeAccounts().find(a => a.id !== main.id);
 
         const html = `
             <form id="txnForm" class="sheet-form">
+                ${draft ? `<div class="capture-note"><i class="fas ${draft.source === 'sms' ? 'fa-comment-sms' : 'fa-bell'}"></i> Detected from ${draft.source === 'sms' ? 'bank SMS' : 'a payment app'}${draft.last4 ? ` · ••${escapeHtml(draft.last4)}` : ''}${draft.accountId ? '' : ' · <b>pick the account</b>'}</div>` : ''}
                 <div class="segmented type-tabs">
                     ${['Expense', 'Income', 'Transfer'].map(t => `<button type="button" data-type="${t}" class="${state.type === t ? 'active' : ''}">${t}</button>`).join('')}
                 </div>
                 <div class="amount-input">
                     <span>₹</span>
-                    <input type="number" id="fAmount" inputmode="decimal" step="0.01" min="0.01" placeholder="0" value="${txn?.amount ?? ''}" required>
+                    <input type="number" id="fAmount" inputmode="decimal" step="0.01" min="0.01" placeholder="0" value="${txn?.amount ?? draft?.amount ?? ''}" required>
                 </div>
                 <div id="catSection">
                     <label>Category</label>
@@ -966,11 +1198,11 @@ class App {
                 <div class="form-row">
                     <div class="form-group">
                         <label for="fDate">Date</label>
-                        <input type="date" id="fDate" value="${txn?.date || todayStr()}" required>
+                        <input type="date" id="fDate" value="${txn?.date || draft?.date || todayStr()}" required>
                     </div>
                     <div class="form-group">
                         <label for="fNote">Note</label>
-                        <input type="text" id="fNote" placeholder="e.g., Swiggy, Petrol" value="${escapeHtml(txn?.note || '')}" maxlength="80">
+                        <input type="text" id="fNote" placeholder="e.g., Swiggy, Petrol" value="${escapeHtml(txn?.note || draft?.note || '')}" maxlength="80">
                     </div>
                 </div>
                 <div id="modeSection">
@@ -982,11 +1214,12 @@ class App {
                 <p class="auth-error" id="txnError"></p>
                 <div class="btn-row">
                     ${isEdit ? `<button type="button" class="btn btn-danger-outline" id="txnDelete"><i class="fas fa-trash"></i></button>` : ''}
+                    ${draft ? `<button type="button" class="btn btn-secondary" id="txnIgnore"><i class="fas fa-ban"></i> Ignore</button>` : ''}
                     <button type="submit" class="btn btn-primary grow"><i class="fas fa-check"></i> ${isEdit ? 'Update' : 'Save'}</button>
                 </div>
             </form>`;
 
-        this.openSheet(isEdit ? 'Edit Transaction' : 'New Transaction', html, body => {
+        this.openSheet(isEdit ? 'Edit Transaction' : draft ? 'Review Transaction' : 'New Transaction', html, body => {
             const form = body.querySelector('#txnForm');
             const renderType = () => {
                 body.querySelectorAll('.type-tabs button').forEach(b => b.classList.toggle('active', b.dataset.type === state.type));
@@ -1015,7 +1248,11 @@ class App {
                 body.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('active', x === b));
             }));
             renderType();
-            if (!isEdit) setTimeout(() => body.querySelector('#fAmount').focus(), 250);
+            if (!isEdit && !draft) setTimeout(() => body.querySelector('#fAmount').focus(), 250);
+            body.querySelector('#txnIgnore')?.addEventListener('click', async () => {
+                await this.ignoreCapture(draft.captureId);
+                this.closeSheet();
+            });
 
             form.addEventListener('submit', async e => {
                 e.preventDefault();
@@ -1035,8 +1272,13 @@ class App {
                     category: state.type === 'Transfer' ? 'transfer' : state.category,
                     paymentMode: state.paymentMode,
                     note: body.querySelector('#fNote').value.trim(),
+                    source: txn?.source || draft?.source || 'manual',
                 };
                 if (state.type === 'Transfer') record.toAccountId = toAccountId;
+                if (draft) {
+                    if (state.type !== 'Transfer') Capture.learn(d, record.note, record.category);
+                    await this.resolveCaptures([draft.captureId]);
+                }
 
                 if (isEdit) d.transactions[d.transactions.findIndex(t => t.id === txn.id)] = record;
                 else d.transactions.push(record);
@@ -1078,6 +1320,11 @@ class App {
                         <label for="aType">Type</label>
                         <select id="aType">${ACCOUNT_TYPES.map(t => `<option ${t === (acc?.type || 'Savings') ? 'selected' : ''}>${t}</option>`).join('')}</select>
                     </div>
+                </div>
+                <div class="form-group">
+                    <label for="aLast4">Last 4 digits of account / debit card</label>
+                    <input type="text" id="aLast4" inputmode="numeric" placeholder="e.g., 4521, 9012" value="${escapeHtml(acc?.last4 || '')}" maxlength="40">
+                    <small>Used to match bank SMS to this account. Separate several with commas.</small>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -1131,6 +1378,7 @@ class App {
                     name,
                     bank: body.querySelector('#aBank').value.trim(),
                     type: body.querySelector('#aType').value,
+                    last4: body.querySelector('#aLast4').value.replace(/[^\d,\s]/g, '').trim(),
                     openingBalance: parseFloat(body.querySelector('#aOpening').value) || 0,
                     openingDate: body.querySelector('#aOpeningDate').value,
                     isMain: isMain && !archived,
@@ -1287,6 +1535,10 @@ class App {
                     <label for="rStart">First debit month</label>
                     <input type="month" id="rStart" value="${rec?.startMonth || currentMonthKey()}" required>
                 </div>
+                <label class="check-row">
+                    <input type="checkbox" id="rAuto" ${rec?.autoPost !== false ? 'checked' : ''}>
+                    <span><b>Record automatically on the debit day</b> — banks often don't send an SMS for auto-debits, so the Google Sheet adds it for you. You'll get a reminder the day before.</span>
+                </label>
                 ${isEdit ? `<label class="check-row"><input type="checkbox" id="rActive" ${rec.isActive ? 'checked' : ''}><span>Active</span></label>` : ''}
                 <div class="btn-row">
                     ${isEdit ? `<button type="button" class="btn btn-danger-outline" id="rDelete"><i class="fas fa-trash"></i></button>` : ''}
@@ -1308,6 +1560,7 @@ class App {
                     debitDay: Math.min(31, Math.max(1, parseInt(body.querySelector('#rDay').value, 10))),
                     startMonth,
                     isActive: isEdit ? body.querySelector('#rActive').checked : true,
+                    autoPost: body.querySelector('#rAuto').checked,
                 };
                 if (rec && rec.startMonth !== startMonth) delete record.lastPaidMonth;
                 if (isEdit) d.recurring[d.recurring.findIndex(r => r.id === rec.id)] = record;
@@ -1356,7 +1609,7 @@ class App {
                 if (body.querySelector('#pwNew').value !== body.querySelector('#pwNew2').value) { err.textContent = 'New passwords do not match'; return; }
                 await this.withBusy(e.target.querySelector('button[type=submit]'), 'Saving…', async () => {
                     try {
-                        await Vault.changePassword(body.querySelector('#pwOld').value, body.querySelector('#pwNew').value);
+                        await Store.changePassword(body.querySelector('#pwOld').value, body.querySelector('#pwNew').value);
                         this.closeSheet();
                         this.toast('Password changed', 'success');
                     } catch (ex) { err.textContent = ex.message; }
@@ -1365,24 +1618,14 @@ class App {
         });
     }
 
-    openDeleteProfileSheet() {
-        this.openSheet('Delete Profile', `
-            <form id="delForm" class="sheet-form">
-                <p class="hint">This permanently deletes <b>@${escapeHtml(Vault.username)}</b> and all its data from this device. Download a backup first if you might need it.</p>
-                <div class="form-group"><label for="delPw">Enter your password to confirm</label><input type="password" id="delPw" autocomplete="current-password" required></div>
-                <p class="auth-error" id="delError"></p>
-                <div class="btn-row"><button type="submit" class="btn btn-danger grow"><i class="fas fa-user-xmark"></i> Delete Permanently</button></div>
-            </form>`, body => {
-            body.querySelector('#delForm').addEventListener('submit', async e => {
-                e.preventDefault();
-                try {
-                    await Vault.deleteCurrentUser(body.querySelector('#delPw').value);
-                    this.destroyCharts();
-                    this.showAuth();
-                    this.toast('Profile deleted');
-                } catch (ex) { body.querySelector('#delError').textContent = ex.message; }
-            });
-        });
+    async openDeleteProfileSheet() {
+        const pending = Store.pendingCount();
+        const warn = pending ? ` ${pending} change${pending === 1 ? ' has' : 's have'} not synced yet and will be lost.` : '';
+        if (!await this.confirm('Remove from this device?', `@${Store.userId} will be logged out and the offline copy deleted from this device. Your data stays in the Google Sheet.${warn}`, 'Remove')) return;
+        Store.forget();
+        this.destroyCharts();
+        this.showAuth();
+        this.toast('Removed from this device');
     }
 
     /* ========== CONFIRM + TOAST ========== */
@@ -1394,7 +1637,7 @@ class App {
             const ok = document.getElementById('confirmOk');
             const cancel = document.getElementById('confirmCancel');
             ok.textContent = okLabel;
-            ok.className = okLabel === 'Delete' ? 'btn btn-danger' : 'btn btn-primary';
+            ok.className = ['Delete', 'Remove'].includes(okLabel) ? 'btn btn-danger' : 'btn btn-primary';
             modal.classList.add('show');
             const done = result => {
                 modal.classList.remove('show');

@@ -1,56 +1,72 @@
 # MoneyBook — Expense & Savings Manager
 
-A mobile-first personal finance app: any number of bank accounts, month-on-month savings with targets and carry-forward, and a separate password-protected login for each person.
+An Android app (plus website) for tracking multiple bank accounts, spending and monthly savings. It captures bank SMS and UPI payments automatically, sends reminders, and keeps your data in your own Google Sheet.
 
 ## Features
 
-- **Login per person**: each user has their own User ID and password. Data is encrypted with that password (AES-256-GCM, key from PBKDF2-SHA256, 250k iterations), so people sharing a phone can't read each other's data. Auto-locks after 10 minutes idle.
-- **Any number of bank accounts**: add salary, daily-use, cash wallet, credit card and other accounts. One is marked **Main**. Home shows the *Total balance*, the *Main account* balance and the combined balance of *Other accounts*. Closed accounts can be archived with their history kept.
-- **Savings tracker**:
-  - Saved this month = Income − Expenses (investments/SIP count as savings; you can turn this off)
-  - Monthly savings target (a default for every month, with optional per-month overrides)
-  - **Carry forward**: what came in from last month → + income → − expenses → what carries into next month
-  - Running "ahead / behind target" total, a chart of savings per month, and a month-on-month table
-- **Transactions**: Expense / Income / Transfer in one form with category tiles. Transfers between your own accounts are not counted as spending.
-- **Budgets** per category with alerts at 80% and when over budget. You can copy last month's budgets.
-- **Auto-debits** (SIP, EMI, rent, subscriptions): tap **Paid** to record the payment in the right account.
-- **Reports**: spending by category, account and payment mode, income vs expenses, top expenses.
-- **Backup**: JSON backup/restore and CSV export of transactions.
-- **Installable (PWA)**: Add to Home Screen on Android/iOS, works offline after the first load, and supports dark mode.
+- **Auto-capture (Android):**
+  - Bank debit/credit SMS and payment alerts from GPay, PhonePe, Paytm, BHIM and bank apps become transactions you save with one tap.
+  - OTPs, personal messages, offers, bill reminders and failed payments are ignored and never stored.
+  - The app learns each merchant's category, and can save known merchants automatically.
+- **Auto-debits without SMS:** SIP, EMI, rent and subscriptions are recorded by the Google Sheet on their debit day, with a reminder the day before.
+- **Reminders:** a daily nudge for cash spends, auto-debit reminders, budget alerts at 80% and 100%, and a monthly savings summary.
+- **Any number of bank accounts** with a Main account. Shows the total balance, the Main balance and the other accounts' balance.
+- **Savings:** monthly target, carry forward month to month, a running ahead/behind-target total, a chart and a month-on-month table.
+- **Logins per person:** each family member has their own User ID and password, and sees only their own data.
+- **Google Sheets database:** syncs across devices, works offline (changes upload when you're back online), and you can open your data directly in Sheets.
+- Budgets, reports, CSV export and JSON backup.
 
-## Run it
+## Architecture
 
-- **On a computer:** open `index.html` in Chrome or Edge.
-- **On your phone:** host the folder on HTTPS, for example GitHub Pages:
-  1. Push this folder to a GitHub repo
-  2. Go to Settings → Pages → Deploy from branch `main` / root
-  3. Open `https://<you>.github.io/<repo>/` on your phone, then use **Add to Home Screen**
+```
+Android APK (Capacitor)                              Website (GitHub Pages)
+ ├─ web UI: index.html, css/, js/                     same web UI
+ ├─ SmsReceiver + PaymentNotificationListener              │
+ │    └─ TxnParser (drops OTPs, keeps only amount,         │
+ │       type, last 4 digits, merchant)                    │
+ ├─ local notifications (reminders)                        │
+ └─ offline cache + sync queue ───────────┬────────────────┘
+                                          ▼
+                      Google Apps Script web app (apps-script/Code.gs)
+                       ├─ login, pull/push sync (per-user rows)
+                       └─ daily trigger: records auto-debits
+                                          ▼
+                      Google Sheet: Users · Accounts · Transactions · Recurring · Budgets · Settings
+```
 
-> Login and encryption need a secure context (`https://` or a local file). Opening the app over plain `http://` on a LAN IP will not work.
+## Setup
 
-## Where the data lives
+1. **Google Sheet backend:** follow [`apps-script/SETUP.md`](apps-script/SETUP.md) (one time, about 5 minutes).
+2. **Install the Android app:**
+   - Download **MoneyBook.apk** from the [latest release](https://github.com/harshhaldankar/moneybook/releases/latest) on your phone, open it, and allow "install unknown apps" when asked.
+   - Paste your Sheet link, then log in.
+   - Turn on auto-capture under **More → Auto-Capture & Reminders**.
+3. **Website (optional):** https://harshhaldankar.github.io/moneybook/
 
-Data is stored **in the browser on each device** (localStorage) and is encrypted per user. That means:
+> Reading SMS isn't allowed for apps on the Play Store, so MoneyBook is installed directly from the APK. It only uses `RECEIVE_SMS` (new incoming messages). It cannot read your existing inbox.
 
-- Different people on the **same** phone each log in with their own ID and see only their own data.
-- The **same** person on two devices does **not** sync automatically. Use *Profile → Download backup* on one device and *Restore from backup* on the other.
-- **Forgotten passwords can't be reset.** The data is unreadable without the password, so take backups.
+## Development
 
-For real cross-device sync with server accounts, the next step would be a backend such as Firebase Auth + Firestore. `Vault` in `js/data.js` is the only place that would need to change.
+```
+npm install
+npm run sync          # copy web files to www/ and into the Android project
+```
 
-## Upgrading from the old 2-account version
-
-The first new user created on a browser that still has old `expenseApp_*` data sees a tick box: **"Bring over data from the previous version"**. Account 1 and Account 2 become named accounts (Account 2 becomes Main), and old paired transfer entries are merged into single transfers. The previous code is kept in `_v1-backup/`.
+- **Every push to `main`:**
+  - GitHub Actions runs the SMS parser unit tests, builds the APK and publishes it as a new release.
+  - GitHub Pages updates the website.
+- **Signing:** to keep updates installable over each other, add the repo secrets `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD`. Without them, CI builds a debug-signed APK.
 
 ## Project structure
 
 ```
-index.html          App shell: login screen, views, bottom sheet
-css/style.css       Mobile-first styles (bottom tabs on phone, side rail on desktop), dark mode
-js/data.js          Categories, Vault (login + encryption), Legacy migration, Calc (balances, savings, carry forward)
-js/app.js           Views, forms, charts (Chart.js)
-manifest.json       PWA manifest
-sw.js               Service worker (offline cache)
-icons/icon.svg      App icon
-appsheet-templates/ CSV templates if you prefer building it in AppSheet instead
+index.html, css/, js/       Web UI (shared by website and APK)
+  js/data.js                Categories, Api + Store (Sheet sync, offline queue), Capture matching, Calc
+  js/native.js              Android bridge: captures, reminders, back button
+  js/app.js                 Views and forms
+apps-script/                Google Sheets backend + setup guide
+android/                    Capacitor Android project
+  app/src/main/java/in/moneybook/app/capture/   SMS + notification capture (TxnParser is unit-tested)
+.github/workflows/          APK build + release
+scripts/build-web.js        Copies web files into www/ for Capacitor
 ```

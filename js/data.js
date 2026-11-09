@@ -1,5 +1,5 @@
 /* ========================================
-   DATA LAYER - Categories, Vault (login + encrypted storage), Calculations
+   DATA LAYER - Categories, Api + Store (Google Sheets sync), Capture, Calculations
    ======================================== */
 
 const EXPENSE_CATEGORIES = [
@@ -46,7 +46,11 @@ function emptyUserData(displayName) {
     return {
         version: 2,
         profile: { displayName, createdAt: new Date().toISOString() },
-        settings: { defaultSavingsTarget: 0, investmentsCountAsSavings: true },
+        settings: {
+            defaultSavingsTarget: 0, investmentsCountAsSavings: true,
+            lockOnOpen: true, dailyReminder: true, reminderTime: '21:00', dueReminders: true, budgetAlerts: true,
+            autoSaveKnown: false, categoryRules: {}, budgetAlerted: {},
+        },
         accounts: [],
         transactions: [],
         recurring: [],
@@ -117,222 +121,385 @@ function getOrdinal(n) {
 }
 
 /* ========================================
-   VAULT - per-user login with encrypted data
-   Each user's data is encrypted with AES-GCM using a key derived from their
-   password (PBKDF2). Without the password the data cannot be read, so
-   several people can share one device safely.
+   API - talks to the Google Apps Script web app that stores data in Google Sheets
    ======================================== */
-const Vault = {
-    USERS_KEY: 'em_users',
-    SESSION_KEY: 'em_session',
-    PBKDF2_ITERATIONS: 250000,
+const Api = {
+    URL_KEY: 'mb_api_url',
 
-    username: null,
-    key: null,
-    data: null,
+    get url() { return localStorage.getItem(this.URL_KEY) || ''; },
+    set url(v) { localStorage.setItem(this.URL_KEY, v.trim()); },
 
-    isSupported() {
-        return !!(window.crypto && window.crypto.subtle);
+    isValidUrl(v) {
+        return /^https:\/\/script\.google(usercontent)?\.com\/.+/.test(String(v).trim());
     },
 
-    getUsers() {
-        try { return JSON.parse(localStorage.getItem(this.USERS_KEY)) || {}; } catch { return {}; }
-    },
-
-    setUsers(users) {
-        localStorage.setItem(this.USERS_KEY, JSON.stringify(users));
-    },
-
-    normalizeUsername(name) {
-        return String(name || '').trim().toLowerCase();
-    },
-
-    /* --- crypto primitives --- */
-    toB64(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))); },
-    fromB64(str) { return Uint8Array.from(atob(str), c => c.charCodeAt(0)); },
-
-    async deriveKey(password, saltB64, iterations) {
-        const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
-        return crypto.subtle.deriveKey(
-            { name: 'PBKDF2', salt: this.fromB64(saltB64), iterations, hash: 'SHA-256' },
-            material,
-            { name: 'AES-GCM', length: 256 },
-            true,
-            ['encrypt', 'decrypt']
-        );
-    },
-
-    async encrypt(key, obj) {
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
-        return { iv: this.toB64(iv), ct: this.toB64(ct) };
-    },
-
-    async decrypt(key, blob) {
-        const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: this.fromB64(blob.iv) }, key, this.fromB64(blob.ct));
-        return JSON.parse(new TextDecoder().decode(pt));
-    },
-
-    dataKey(username) { return `em_data_${username}`; },
-
-    /* --- account lifecycle --- */
-    async signUp(rawUsername, displayName, password, initialData = null) {
-        const username = this.normalizeUsername(rawUsername);
-        if (!/^[a-z0-9._-]{3,24}$/.test(username)) throw new Error('User ID must be 3-24 characters: letters, numbers, . _ -');
-        if (password.length < 6) throw new Error('Password must be at least 6 characters');
-        const users = this.getUsers();
-        if (users[username]) throw new Error('This User ID is already taken on this device');
-
-        const salt = this.toB64(crypto.getRandomValues(new Uint8Array(16)));
-        const key = await this.deriveKey(password, salt, this.PBKDF2_ITERATIONS);
-        const data = initialData || emptyUserData(displayName || rawUsername);
-        data.profile.displayName = displayName || data.profile.displayName || rawUsername;
-
-        localStorage.setItem(this.dataKey(username), JSON.stringify(await this.encrypt(key, data)));
-        users[username] = { displayName: data.profile.displayName, salt, iterations: this.PBKDF2_ITERATIONS, createdAt: new Date().toISOString() };
-        this.setUsers(users);
-        await this.openSession(username, key, data);
-    },
-
-    async signIn(rawUsername, password) {
-        const username = this.normalizeUsername(rawUsername);
-        const user = this.getUsers()[username];
-        const blob = JSON.parse(localStorage.getItem(this.dataKey(username)) || 'null');
-        if (!user || !blob) throw new Error('Incorrect User ID or password');
-        const key = await this.deriveKey(password, user.salt, user.iterations);
-        let data;
-        try { data = await this.decrypt(key, blob); } catch { throw new Error('Incorrect User ID or password'); }
-        await this.openSession(username, key, data);
-    },
-
-    async openSession(username, key, data) {
-        this.username = username;
-        this.key = key;
-        this.data = data;
-        const raw = await crypto.subtle.exportKey('raw', key);
-        // sessionStorage is per-tab and cleared when the tab closes
-        sessionStorage.setItem(this.SESSION_KEY, JSON.stringify({ username, k: this.toB64(raw) }));
-    },
-
-    async restoreSession() {
+    async call(action, payload = {}) {
+        if (!this.url) throw new Error('Connect your Google Sheet first');
+        let res;
         try {
-            const sess = JSON.parse(sessionStorage.getItem(this.SESSION_KEY) || 'null');
-            if (!sess) return false;
-            const key = await crypto.subtle.importKey('raw', this.fromB64(sess.k), 'AES-GCM', true, ['encrypt', 'decrypt']);
-            const blob = JSON.parse(localStorage.getItem(this.dataKey(sess.username)) || 'null');
-            if (!blob) return false;
-            this.data = await this.decrypt(key, blob);
-            this.username = sess.username;
-            this.key = key;
-            return true;
+            // text/plain avoids a CORS preflight, which Apps Script can't answer
+            res = await fetch(this.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action, ...payload }), redirect: 'follow' });
         } catch {
-            sessionStorage.removeItem(this.SESSION_KEY);
-            return false;
+            const err = new Error('No internet connection');
+            err.offline = true;
+            throw err;
         }
-    },
-
-    signOut() {
-        this.username = null;
-        this.key = null;
-        this.data = null;
-        sessionStorage.removeItem(this.SESSION_KEY);
-    },
-
-    async save() {
-        if (!this.key) return;
-        localStorage.setItem(this.dataKey(this.username), JSON.stringify(await this.encrypt(this.key, this.data)));
-        const users = this.getUsers();
-        if (users[this.username]) {
-            users[this.username].displayName = this.data.profile.displayName;
-            this.setUsers(users);
+        let body;
+        try { body = await res.json(); } catch { throw new Error('The Google Sheet link is not a MoneyBook web app'); }
+        if (!body.ok) {
+            const err = new Error(body.error || 'Server error');
+            err.auth = /session expired/i.test(body.error || '');
+            throw err;
         }
-    },
-
-    async changePassword(oldPassword, newPassword) {
-        if (newPassword.length < 6) throw new Error('New password must be at least 6 characters');
-        const users = this.getUsers();
-        const user = users[this.username];
-        const oldKey = await this.deriveKey(oldPassword, user.salt, user.iterations);
-        try { await this.decrypt(oldKey, JSON.parse(localStorage.getItem(this.dataKey(this.username)))); }
-        catch { throw new Error('Current password is incorrect'); }
-
-        const salt = this.toB64(crypto.getRandomValues(new Uint8Array(16)));
-        const key = await this.deriveKey(newPassword, salt, this.PBKDF2_ITERATIONS);
-        localStorage.setItem(this.dataKey(this.username), JSON.stringify(await this.encrypt(key, this.data)));
-        users[this.username] = { ...user, salt, iterations: this.PBKDF2_ITERATIONS };
-        this.setUsers(users);
-        await this.openSession(this.username, key, this.data);
-    },
-
-    async deleteCurrentUser(password) {
-        const users = this.getUsers();
-        const user = users[this.username];
-        const key = await this.deriveKey(password, user.salt, user.iterations);
-        try { await this.decrypt(key, JSON.parse(localStorage.getItem(this.dataKey(this.username)))); }
-        catch { throw new Error('Password is incorrect'); }
-        localStorage.removeItem(this.dataKey(this.username));
-        delete users[this.username];
-        this.setUsers(users);
-        this.signOut();
+        return body;
     },
 };
 
 /* ========================================
-   LEGACY MIGRATION - data from the old 2-account version (expenseApp_* keys)
+   STORE - logged-in user, offline cache, and sync with the Sheet
+   The app edits Store.data directly and calls Store.save(); save() works out
+   what changed since the last sync and queues those rows for upload.
    ======================================== */
-const Legacy = {
-    exists() {
-        return localStorage.getItem('expenseApp_transactions') !== null || localStorage.getItem('expenseApp_settings') !== null;
+const TABLE_FIELDS = {
+    Accounts: ['id', 'name', 'bank', 'type', 'last4', 'openingBalance', 'openingDate', 'isMain', 'color', 'archived'],
+    Transactions: ['id', 'date', 'type', 'amount', 'accountId', 'toAccountId', 'category', 'paymentMode', 'note', 'source'],
+    Recurring: ['id', 'name', 'amount', 'category', 'accountId', 'frequency', 'debitDay', 'startMonth', 'lastPaidMonth', 'isActive', 'autoPost'],
+    Budgets: ['id', 'month', 'category', 'amount'],
+    Settings: ['id', 'key', 'value'],
+};
+const TABLE_KEYS = { Accounts: 'accounts', Transactions: 'transactions', Recurring: 'recurring', Budgets: 'budgets' };
+const SETTINGS_KEYS = ['profile', 'settings', 'savingsTargets'];
+const BOOL_FIELDS = ['isMain', 'archived', 'isActive', 'autoPost'];
+const NUMBER_FIELDS = ['amount', 'openingBalance', 'debitDay'];
+
+const Store = {
+    SESSIONS_KEY: 'mb_sessions',
+    CURRENT_KEY: 'mb_current',
+    UNLOCKED_KEY: 'mb_unlocked',
+
+    userId: null,
+    token: null,
+    data: null,
+    syncState: 'idle',     // idle | syncing | offline | error
+    onChange: null,        // set by the app: called after remote data arrives
+    flushing: false,
+
+    /* --- device sessions (several people can use one phone) --- */
+    getSessions() {
+        try { return JSON.parse(localStorage.getItem(this.SESSIONS_KEY)) || {}; } catch { return {}; }
+    },
+    setSessions(s) { localStorage.setItem(this.SESSIONS_KEY, JSON.stringify(s)); },
+    cacheKey(u) { return `mb_cache_${u}`; },
+    queueKey(u) { return `mb_queue_${u}`; },
+    snapKey(u) { return `mb_snap_${u}`; },
+
+    /* --- local password check, so the app can be unlocked offline --- */
+    async verifier(password, salt) {
+        const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+        const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: new TextEncoder().encode(salt), iterations: 150000, hash: 'SHA-256' }, material, 256);
+        return btoa(String.fromCharCode(...new Uint8Array(bits)));
     },
 
-    read(key, fallback) {
-        try { return JSON.parse(localStorage.getItem(`expenseApp_${key}`)) ?? fallback; } catch { return fallback; }
+    async register(userId, displayName, password) {
+        const res = await Api.call('register', { userId, displayName, password });
+        await this.startSession(res, password);
     },
 
-    toUserData(displayName) {
-        const data = emptyUserData(displayName);
-        const s = this.read('settings', {});
-        const legacyTxns = this.read('transactions', []);
-        const today = legacyTxns.map(t => t.date).filter(Boolean).sort()[0] || todayStr();
-        const acc1 = { id: generateId(), name: s.acc1Name || 'Account 1', bank: '', type: 'Savings', openingBalance: Number(s.acc1OpeningBalance) || 0, openingDate: today, isMain: false, color: ACCOUNT_COLORS[0], archived: false };
-        const acc2 = { id: generateId(), name: s.acc2Name || 'Account 2', bank: '', type: 'Salary', openingBalance: Number(s.acc2OpeningBalance) || 0, openingDate: today, isMain: true, color: ACCOUNT_COLORS[1], archived: false };
-        data.accounts = [acc2, acc1];
-        const accId = name => (name === 'Account 1' ? acc1.id : acc2.id);
+    async login(userId, password) {
+        const res = await Api.call('login', { userId, password });
+        await this.startSession(res, password);
+    },
 
-        const txns = legacyTxns;
-        const seenLinks = new Set();
-        txns.forEach(t => {
-            if (t.type === 'Transfer') {
-                if (t.linkedId && seenLinks.has(t.id)) return;
-                const partner = txns.find(p => p.id === t.linkedId);
-                if (partner) seenLinks.add(partner.id);
-                const out = t.transferDirection === 'out' ? t : partner;
-                const inn = t.transferDirection === 'in' ? t : partner;
-                data.transactions.push({
-                    id: generateId(), type: 'Transfer', amount: Number(t.amount), date: t.date,
-                    accountId: out ? accId(out.account) : (accId(t.account) === acc1.id ? acc2.id : acc1.id),
-                    toAccountId: inn ? accId(inn.account) : (accId(t.account) === acc1.id ? acc2.id : acc1.id),
-                    category: 'transfer', paymentMode: t.paymentMode || 'Net Banking', note: t.note || '',
-                });
-            } else {
-                data.transactions.push({
-                    id: generateId(), type: t.type, amount: Number(t.amount), date: t.date,
-                    accountId: accId(t.account), category: t.category || (t.type === 'Income' ? 'other_income' : 'misc'),
-                    paymentMode: t.paymentMode || 'UPI', note: [t.subCategory, t.note].filter(Boolean).join(' - '),
-                });
-            }
+    async startSession(res, password) {
+        const salt = generateId() + generateId();
+        const sessions = this.getSessions();
+        sessions[res.userId] = { token: res.token, displayName: res.displayName, salt, verifier: await this.verifier(password, salt) };
+        this.setSessions(sessions);
+        this.userId = res.userId;
+        this.token = res.token;
+        localStorage.setItem(this.CURRENT_KEY, res.userId);
+        sessionStorage.setItem(this.UNLOCKED_KEY, res.userId);
+        localStorage.removeItem(this.queueKey(res.userId));
+        this.applyServerData(res.data, res.displayName);
+        await this.importPreviousVersion(res.userId, password);
+    },
+
+    /**
+     * One-time move of data saved by the earlier on-device version (encrypted with the
+     * same User ID + password) into the Sheet, if the Sheet has nothing for this user yet.
+     */
+    async importPreviousVersion(userId, password) {
+        try {
+            const old = (JSON.parse(localStorage.getItem('em_users')) || {})[userId];
+            const blob = JSON.parse(localStorage.getItem(`em_data_${userId}`) || 'null');
+            if (!old || !blob || this.data.accounts.length || this.data.transactions.length) return;
+            const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+            const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+            const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(old.salt), iterations: old.iterations, hash: 'SHA-256' },
+                material, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+            const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(blob.iv) }, key, b64(blob.ct));
+            const previous = this.normalize(JSON.parse(new TextDecoder().decode(plain)));
+            Object.assign(this.data, previous, { settings: { ...this.data.settings, ...previous.settings } });
+            localStorage.removeItem(`em_data_${userId}`);
+            await this.save();
+            this.importedPrevious = true;
+        } catch { /* different password or no old data: nothing to import */ }
+    },
+
+    /** Unlock a user who already logged in on this device (works offline). */
+    async unlock(userId, password) {
+        const id = String(userId).trim().toLowerCase();
+        const s = this.getSessions()[id];
+        if (!s) return false;
+        if (await this.verifier(password, s.salt) !== s.verifier) throw new Error('Incorrect User ID or password');
+        this.openLocal(id);
+        sessionStorage.setItem(this.UNLOCKED_KEY, id);
+        return true;
+    },
+
+    /** Resume without a password (same browser tab, or "ask password on open" turned off). */
+    resume() {
+        const id = localStorage.getItem(this.CURRENT_KEY);
+        const s = id && this.getSessions()[id];
+        if (!s) return false;
+        this.openLocal(id);
+        const lockOnOpen = this.data.settings.lockOnOpen !== false;
+        if (lockOnOpen && sessionStorage.getItem(this.UNLOCKED_KEY) !== id) {
+            this.userId = null; this.data = null;
+            return false;
+        }
+        return true;
+    },
+
+    openLocal(id) {
+        const s = this.getSessions()[id];
+        this.userId = id;
+        this.token = s.token;
+        localStorage.setItem(this.CURRENT_KEY, id);
+        try { this.data = JSON.parse(localStorage.getItem(this.cacheKey(id))); } catch { this.data = null; }
+        if (!this.data) this.data = emptyUserData(s.displayName);
+        this.normalize(this.data);
+    },
+
+    lock() {
+        sessionStorage.removeItem(this.UNLOCKED_KEY);
+        this.userId = null; this.token = null; this.data = null;
+    },
+
+    /** Remove this user's session and cached data from this device. */
+    forget(id = this.userId) {
+        const sessions = this.getSessions();
+        delete sessions[id];
+        this.setSessions(sessions);
+        [this.cacheKey(id), this.queueKey(id), this.snapKey(id)].forEach(k => localStorage.removeItem(k));
+        if (localStorage.getItem(this.CURRENT_KEY) === id) localStorage.removeItem(this.CURRENT_KEY);
+        this.lock();
+    },
+
+    async changePassword(oldPassword, newPassword) {
+        const res = await Api.call('changePassword', { userId: this.userId, token: this.token, oldPassword, newPassword });
+        const sessions = this.getSessions();
+        const salt = generateId() + generateId();
+        sessions[this.userId] = { ...sessions[this.userId], token: res.token, salt, verifier: await this.verifier(newPassword, salt) };
+        this.setSessions(sessions);
+        this.token = res.token;
+    },
+
+    /* --- converting between app data and Sheet rows --- */
+    normalize(d) {
+        const base = emptyUserData(d.profile?.displayName || '');
+        d.profile = { ...base.profile, ...d.profile };
+        d.settings = { ...base.settings, ...d.settings };
+        d.savingsTargets = d.savingsTargets || {};
+        ['accounts', 'transactions', 'recurring', 'budgets'].forEach(k => { d[k] = d[k] || []; });
+        return d;
+    },
+
+    toTables(d) {
+        const blank = f => (BOOL_FIELDS.includes(f) ? false : NUMBER_FIELDS.includes(f) ? 0 : '');
+        const pick = (table, rec) => Object.fromEntries(TABLE_FIELDS[table].map(f => [f, rec[f] === undefined || rec[f] === null ? blank(f) : rec[f]]));
+        const tables = {};
+        Object.entries(TABLE_KEYS).forEach(([table, key]) => { tables[table] = d[key].map(r => pick(table, r)); });
+        tables.Settings = SETTINGS_KEYS.map(key => ({ id: `${this.userId}:${key}`, key, value: JSON.stringify(d[key] || {}) }));
+        return tables;
+    },
+
+    fromTables(tables, displayName) {
+        const d = emptyUserData(displayName);
+        Object.entries(TABLE_KEYS).forEach(([table, key]) => {
+            d[key] = (tables[table] || []).map(r => Object.fromEntries(TABLE_FIELDS[table].map(f => [f, r[f]])));
         });
-
-        data.recurring = this.read('recurring', []).map(r => ({
-            id: generateId(), name: r.name, amount: Number(r.amount), category: r.category,
-            accountId: accId(r.account), frequency: r.frequency || 'Monthly', debitDay: Number(r.debitDay) || 1, isActive: r.isActive !== false,
-        }));
-        data.budgets = this.read('budgets', []).map(b => ({ id: generateId(), month: b.month, category: b.category, amount: Number(b.amount) }));
-        return data;
+        (tables.Settings || []).forEach(s => {
+            if (!SETTINGS_KEYS.includes(s.key)) return;
+            try { d[s.key] = { ...d[s.key], ...JSON.parse(s.value) }; } catch { /* ignore bad cell */ }
+        });
+        d.accounts.forEach(a => { a.last4 = String(a.last4 || ''); });
+        return this.normalize(d);
     },
 
-    clear() {
-        Object.keys(localStorage).filter(k => k.startsWith('expenseApp_')).forEach(k => localStorage.removeItem(k));
+    snapshotOf(d) {
+        const snap = {};
+        Object.entries(this.toTables(d)).forEach(([table, rows]) => {
+            snap[table] = Object.fromEntries(rows.map(r => [r.id, JSON.stringify(r)]));
+        });
+        return snap;
+    },
+
+    applyServerData(tables, displayName) {
+        let d = this.fromTables(tables, displayName || this.getSessions()[this.userId]?.displayName);
+        const queue = this.getQueue();
+        if (queue.length) d = this.applyOps(d, queue);   // keep edits made while the request was in flight
+        localStorage.setItem(this.snapKey(this.userId), JSON.stringify(this.snapshotOf(this.fromTables(tables, displayName))));
+        // Update in place: open forms hold a reference to Store.data and must keep writing to the live object
+        if (this.data) {
+            Object.keys(this.data).forEach(k => { delete this.data[k]; });
+            Object.assign(this.data, d);
+        } else {
+            this.data = d;
+        }
+        localStorage.setItem(this.cacheKey(this.userId), JSON.stringify(d));
+    },
+
+    applyOps(d, ops) {
+        const tables = this.toTables(d);
+        ops.forEach(o => {
+            const rows = tables[o.table];
+            const i = rows.findIndex(r => r.id === o.record.id);
+            if (o.op === 'delete') { if (i >= 0) rows.splice(i, 1); } else if (i >= 0) rows[i] = o.record; else rows.push(o.record);
+        });
+        return this.fromTables(tables, d.profile.displayName);
+    },
+
+    getQueue() {
+        try { return JSON.parse(localStorage.getItem(this.queueKey(this.userId))) || []; } catch { return []; }
+    },
+    setQueue(q) { localStorage.setItem(this.queueKey(this.userId), JSON.stringify(q)); },
+
+    /** Save locally right away, queue the changed rows, and upload in the background. */
+    async save() {
+        if (!this.userId) return;
+        let snap;
+        try { snap = JSON.parse(localStorage.getItem(this.snapKey(this.userId))) || {}; } catch { snap = {}; }
+        const current = this.snapshotOf(this.data);
+        const queue = this.getQueue();
+        const upsert = (table, id, op, record) => {
+            const i = queue.findIndex(q => q.table === table && q.record.id === id);
+            const entry = { table, op, record };
+            if (i >= 0) queue[i] = entry; else queue.push(entry);
+        };
+        Object.keys(current).forEach(table => {
+            const before = snap[table] || {};
+            Object.entries(current[table]).forEach(([id, json]) => { if (before[id] !== json) upsert(table, id, 'upsert', JSON.parse(json)); });
+            Object.keys(before).forEach(id => { if (!(id in current[table])) upsert(table, id, 'delete', { id }); });
+        });
+        // Drop queued ops that now match the last synced state
+        const pending = queue.filter(q => {
+            const cur = (current[q.table] || {})[q.record.id];
+            const old = (snap[q.table] || {})[q.record.id];
+            return q.op === 'delete' ? old !== undefined && cur === undefined : cur !== undefined && cur !== old;
+        });
+        this.setQueue(pending);
+        localStorage.setItem(this.cacheKey(this.userId), JSON.stringify(this.data));
+        this.flush();
+    },
+
+    pendingCount() { return this.userId ? this.getQueue().length : 0; },
+
+    setState(state) {
+        this.syncState = state;
+        if (this.onStateChange) this.onStateChange(state);
+    },
+
+    /** Upload queued changes, then download the latest from the Sheet. */
+    async flush() {
+        if (!this.userId || this.flushing) return;
+        this.flushing = true;
+        this.setState('syncing');
+        const user = this.userId;
+        try {
+            const queue = this.getQueue();
+            const res = queue.length
+                ? await Api.call('push', { userId: user, token: this.token, ops: queue })
+                : await Api.call('pull', { userId: user, token: this.token });
+            if (this.userId !== user) return;
+            // Remove the ops we just sent; anything added meanwhile stays queued
+            const sent = new Set(queue.map(q => `${q.table}:${q.record.id}:${JSON.stringify(q.record)}:${q.op}`));
+            this.setQueue(this.getQueue().filter(q => !sent.has(`${q.table}:${q.record.id}:${JSON.stringify(q.record)}:${q.op}`)));
+            const before = JSON.stringify(this.data);
+            this.applyServerData(res.data);
+            this.setState('idle');
+            if (before !== JSON.stringify(this.data) && this.onChange) this.onChange();
+        } catch (err) {
+            this.setState(err.offline ? 'offline' : 'error');
+            if (err.auth && this.onAuthError) this.onAuthError();
+        } finally {
+            this.flushing = false;
+            if (this.userId === user && this.getQueue().length && this.syncState === 'idle') setTimeout(() => this.flush(), 300);
+        }
+    },
+};
+
+/* ========================================
+   CAPTURE - turns detected bank SMS / UPI notifications into transaction drafts
+   (The Android side has already dropped OTPs and non-bank messages.)
+   ======================================== */
+const MERCHANT_HINTS = [
+    [/swiggy|zomato|domino|mcdonald|kfc|pizza|cafe|restaurant|starbucks|eatsure/i, 'food'],
+    [/blinkit|zepto|bigbasket|instamart|dmart|jiomart|grocer|more retail|reliance fresh/i, 'groceries'],
+    [/uber|ola|rapido|irctc|metro|fastag|petrol|fuel|hpcl|bpcl|indian oil|redbus/i, 'transport'],
+    [/amazon|flipkart|myntra|ajio|meesho|nykaa|tata cliq|croma/i, 'shopping'],
+    [/netflix|hotstar|spotify|prime video|youtube|sonyliv|zee5|apple\.com|google play/i, 'subscriptions'],
+    [/airtel|jio|vodafone|\bvi\b|bsnl|electricity|bescom|mseb|tata power|adani|gas|broadband|recharge|bill/i, 'bills'],
+    [/pharm|apollo|medplus|1mg|netmeds|hospital|clinic|diagnost/i, 'health'],
+    [/zerodha|groww|upstox|mutual fund|\bsip\b|nps|kuvera|coin/i, 'investments'],
+    [/emi|loan|bajaj fin/i, 'emi'],
+    [/bookmyshow|pvr|inox|steam|playstation/i, 'entertainment'],
+    [/makemytrip|goibibo|indigo|air india|vistara|oyo|airbnb|cleartrip/i, 'travel'],
+];
+
+const Capture = {
+    merchantKey(m) {
+        return String(m || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').slice(0, 3).join(' ');
+    },
+
+    matchAccount(data, last4) {
+        if (!last4) return null;
+        return data.accounts.find(a => !a.archived && String(a.last4 || '').split(/[\s,]+/).filter(Boolean).some(d => d.slice(-4) === last4 || last4.endsWith(d)));
+    },
+
+    guessCategory(data, merchant, type) {
+        const rules = data.settings.categoryRules || {};
+        const key = this.merchantKey(merchant);
+        if (key && rules[key]) return { category: rules[key], learned: true };
+        if (type === 'Income') return { category: /salary|sal\b/i.test(merchant || '') ? 'salary' : /refund|cashback|reversal/i.test(merchant || '') ? 'refund' : 'other_income', learned: false };
+        const hint = MERCHANT_HINTS.find(([re]) => re.test(merchant || ''));
+        return { category: hint ? hint[1] : null, learned: false };
+    },
+
+    /** Build a transaction draft from a native capture { id, amount, type, last4, merchant, mode, source, ts } */
+    toDraft(data, cap) {
+        const acc = this.matchAccount(data, cap.last4);
+        const guess = this.guessCategory(data, cap.merchant, cap.type);
+        const d = new Date(Number(cap.ts) || Date.now());
+        return {
+            captureId: cap.id,
+            type: cap.type === 'credit' ? 'Income' : 'Expense',
+            amount: Number(cap.amount),
+            date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+            accountId: acc?.id || null,
+            category: guess.category,
+            learned: guess.learned,
+            paymentMode: cap.mode || 'UPI',
+            note: cap.merchant || '',
+            last4: cap.last4 || '',
+            source: cap.source || 'sms',
+        };
+    },
+
+    learn(data, merchant, category) {
+        const key = this.merchantKey(merchant);
+        if (!key || !category) return;
+        data.settings.categoryRules = { ...(data.settings.categoryRules || {}), [key]: category };
     },
 };
 
