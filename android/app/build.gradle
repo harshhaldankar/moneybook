@@ -8,8 +8,8 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // CI passes the run number so every APK can install over the previous one
-        versionCode (System.getenv("VERSION_CODE") ?: "1").toInteger()
-        versionName System.getenv("VERSION_NAME") ?: "2.1.0"
+        versionCode = (System.getenv("VERSION_CODE") ?: "1").toInteger()
+        versionName = System.getenv("VERSION_NAME") ?: "2.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -30,7 +30,7 @@ android {
     }
     buildTypes {
         release {
-            signingConfig System.getenv("KEYSTORE_FILE") ? signingConfigs.release : null
+            signingConfig = System.getenv("KEYSTORE_FILE") ? signingConfigs.release : null
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
