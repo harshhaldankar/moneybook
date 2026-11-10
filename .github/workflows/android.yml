@@ -31,6 +31,8 @@ jobs:
         run: npm ci
 
       - name: Copy web app into the Android project
+        env:
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
         run: npm run build:web && npx cap sync android
 
       - name: Restore signing key

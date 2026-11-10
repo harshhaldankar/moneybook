@@ -55,6 +55,8 @@ npm run sync          # copy web files to www/ and into the Android project
 - **Every push to `main`:**
   - GitHub Actions runs the SMS parser unit tests, builds the APK and publishes it as a new release.
   - GitHub Pages updates the website.
+- **Built-in Sheet link:** add the repo secret `APPS_SCRIPT_URL` (your web app link ending in `/exec`). The APK and website builds write it into the app, so nobody sees the Connect step. It never appears in the code; sign-ups are capped by the `MAX_USERS` script property (default 10).
+- **Website:** deployed by the `Website` workflow (Settings → Pages → Source: **GitHub Actions**).
 - **Signing:** to keep updates installable over each other, add the repo secrets `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD`. Without them, CI builds a debug-signed APK.
 
 ## Project structure

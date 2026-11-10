@@ -88,6 +88,17 @@ function formatDate(dateStr) {
     return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/** "Today", "Yesterday", or a short date for lists. */
+function friendlyDate(dateStr) {
+    const t = todayStr();
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    const yStr = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`;
+    if (dateStr === t) return 'Today';
+    if (dateStr === yStr) return 'Yesterday';
+    const sameYear = dateStr.slice(0, 4) === t.slice(0, 4);
+    return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-IN', sameYear ? { weekday: 'short', day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 function monthKeyOf(dateStr) { return dateStr.slice(0, 7); }
 
 function currentMonthKey() { return todayStr().slice(0, 7); }
@@ -126,8 +137,10 @@ function getOrdinal(n) {
 const Api = {
     URL_KEY: 'mb_api_url',
 
-    get url() { return localStorage.getItem(this.URL_KEY) || ''; },
+    // A link saved on this device wins; otherwise use the one built into the app
+    get url() { return localStorage.getItem(this.URL_KEY) || APP_CONFIG.apiUrl || ''; },
     set url(v) { localStorage.setItem(this.URL_KEY, v.trim()); },
+    get isCustom() { return !!localStorage.getItem(this.URL_KEY) && localStorage.getItem(this.URL_KEY) !== APP_CONFIG.apiUrl; },
 
     isValidUrl(v) {
         return /^https:\/\/script\.google(usercontent)?\.com\/.+/.test(String(v).trim());

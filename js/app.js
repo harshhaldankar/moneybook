@@ -4,7 +4,7 @@
 
 const TOP_VIEWS = ['home', 'activity', 'savings', 'more'];
 const VIEW_TITLES = {
-    home: 'Home', activity: 'Activity', savings: 'Savings', more: 'More',
+    home: 'MoneyBook', activity: 'Activity', savings: 'Savings', more: 'More',
     accounts: 'Bank Accounts', budgets: 'Budgets', recurring: 'Auto-Debits', reports: 'Reports', profile: 'Profile & Security',
     automation: 'Share SMS & Reminders',
 };
@@ -155,7 +155,7 @@ class App {
         if (!Api.url) { this.showConnect(); return; }
         document.getElementById('connectForm').hidden = true;
         document.getElementById('authTabs').hidden = false;
-        document.getElementById('serverLine').hidden = false;
+        document.getElementById('serverLine').hidden = !Api.isCustom;
 
         const sessions = Store.getSessions();
         const ids = Object.keys(sessions);
@@ -300,6 +300,10 @@ class App {
             'month-next': () => { this.month = shiftMonth(this.month, 1); this.render(); },
             'month-set': () => { this.month = ds.month; this.render(); },
             'go': () => this.navigate(ds.view),
+            'toggle-hide': () => {
+                try { localStorage.setItem('mb_hide_balances', this.hideBalances ? '0' : '1'); } catch { /* storage unavailable */ }
+                this.render();
+            },
             'edit-target': () => this.openTargetSheet(),
             'add-budget': () => this.openBudgetSheet(null),
             'edit-budget': () => this.openBudgetSheet(this.data.budgets.find(b => b.id === ds.id)),
@@ -341,19 +345,61 @@ class App {
     activeAccounts() { return this.data.accounts.filter(a => !a.archived); }
 
     /* ========== HOME ========== */
+    /** Balances can be hidden on screen (like a bank app); stored per device. */
+    get hideBalances() {
+        try { return localStorage.getItem('mb_hide_balances') === '1'; } catch { return false; }
+    }
+
+    money(amount) {
+        return this.hideBalances ? '₹ ••••••' : formatCurrency(amount);
+    }
+
+    greeting() {
+        const h = new Date().getHours();
+        return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+    }
+
+    /** Ring showing progress to the savings target (or savings rate when no target is set). */
+    savingsRing(s) {
+        const hasTarget = s.target > 0;
+        const pct = hasTarget ? (s.targetPct ?? 0) : (s.savingsRate ?? 0);
+        const shown = Math.max(0, Math.min(pct, 100));
+        const r = 42, c = 2 * Math.PI * r;
+        const done = hasTarget && s.saved >= s.target;
+        return `
+            <button class="ring ${done ? 'done' : ''} ${s.saved < 0 ? 'negative' : ''}" data-action="edit-target" aria-label="Savings target">
+                <svg viewBox="0 0 100 100" aria-hidden="true">
+                    <circle class="ring-track" cx="50" cy="50" r="${r}"></circle>
+                    <circle class="ring-fill" cx="50" cy="50" r="${r}" stroke-dasharray="${(shown / 100) * c} ${c}"></circle>
+                </svg>
+                <span class="ring-center">
+                    <b>${done ? '<i class="fas fa-check"></i>' : `${Math.round(pct)}%`}</b>
+                    <small>${hasTarget ? (done ? 'Target hit' : 'of target') : 'saved'}</small>
+                </span>
+            </button>`;
+    }
+
     renderHome() {
         const d = this.data;
         const el = document.getElementById('view-home');
         const firstName = escapeHtml(d.profile.displayName.split(' ')[0]);
+        const today = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
+        const header = `
+            <div class="home-head">
+                <div>
+                    <p class="greeting">${this.greeting()}, ${firstName}</p>
+                    <small>${today}</small>
+                </div>
+            </div>`;
 
         if (!d.accounts.length) {
             el.innerHTML = `
-                <p class="greeting">Hi ${firstName} 👋</p>
+                ${header}
                 <div class="card empty-hero">
-                    <i class="fas fa-building-columns"></i>
-                    <h2>Add your bank accounts</h2>
-                    <p>Add every account you use (salary account, daily-use account, cash wallet…). Pick one as your <b>Main</b> account.</p>
-                    <button class="btn btn-primary" data-action="add-account"><i class="fas fa-plus"></i> Add Account</button>
+                    <div class="empty-icon"><i class="fas fa-building-columns"></i></div>
+                    <h2>Add your first account</h2>
+                    <p>Start with the account your salary comes into. You can add more later: daily-use account, cash wallet, credit card.</p>
+                    <button class="btn btn-primary" data-action="add-account"><i class="fas fa-plus"></i> Add account</button>
                 </div>`;
             return;
         }
@@ -361,59 +407,81 @@ class App {
         const split = Calc.balanceSplit(d);
         const s = Calc.monthStats(d, this.month);
         const accounts = this.activeAccounts();
+        const others = Math.max(accounts.length - 1, 0);
+        const mainPct = split.total > 0 ? Math.max(0, Math.min(100, (split.mainBal / split.total) * 100)) : 100;
+        const isCurrent = this.month === currentMonthKey();
 
         el.innerHTML = `
-            <p class="greeting">Hi ${firstName} 👋</p>
+            ${header}
 
             ${this.capturesCard()}
 
-            <div class="card hero-card">
-                <span class="hero-label">Total Balance</span>
-                <span class="hero-value">${formatCurrency(split.total)}</span>
+            <div class="hero-card">
+                <div class="hero-top">
+                    <span class="hero-label">Total balance</span>
+                    <button class="hero-eye" data-action="toggle-hide" aria-label="${this.hideBalances ? 'Show' : 'Hide'} balances"><i class="fas ${this.hideBalances ? 'fa-eye-slash' : 'fa-eye'}"></i></button>
+                </div>
+                <span class="hero-value">${this.money(split.total)}</span>
+                <div class="hero-bar" aria-hidden="true"><span style="width:${mainPct}%"></span></div>
                 <div class="hero-split">
                     <div>
-                        <span class="hero-sub"><i class="fas fa-star"></i> Main · ${escapeHtml(split.main?.name || '-')}</span>
-                        <b>${formatCurrency(split.mainBal)}</b>
+                        <span class="hero-sub"><i class="dot main"></i>Main · ${escapeHtml(split.main?.name || '-')}</span>
+                        <b>${this.money(split.mainBal)}</b>
                     </div>
                     <div>
-                        <span class="hero-sub">Other ${accounts.length - 1 === 1 ? 'account' : 'accounts'} (${Math.max(accounts.length - 1, 0)})</span>
-                        <b>${formatCurrency(split.othersBal)}</b>
+                        <span class="hero-sub"><i class="dot other"></i>${others ? `${others} other account${others === 1 ? '' : 's'}` : 'Other accounts'}</span>
+                        <b>${this.money(split.othersBal)}</b>
                     </div>
                 </div>
             </div>
 
+            <div class="quick-actions">
+                <button data-action="add-txn" data-type="Expense"><span class="qa-icon expense"><i class="fas fa-arrow-up"></i></span>Expense</button>
+                <button data-action="add-txn" data-type="Income"><span class="qa-icon income"><i class="fas fa-arrow-down"></i></span>Income</button>
+                <button data-action="add-txn" data-type="Transfer"><span class="qa-icon transfer"><i class="fas fa-arrow-right-arrow-left"></i></span>Transfer</button>
+                <button data-action="edit-target"><span class="qa-icon target"><i class="fas fa-bullseye"></i></span>Target</button>
+            </div>
+
+            <div class="section-head">
+                <h3>Accounts</h3>
+                <button class="link-btn" data-action="go" data-view="accounts">Manage</button>
+            </div>
             <div class="account-scroller">
                 ${accounts.map(a => `
                     <button class="account-chip" data-action="filter-account" data-id="${a.id}" style="--acc:${a.color}">
-                        <span class="acc-name">${a.isMain ? '<i class="fas fa-star"></i> ' : ''}${escapeHtml(a.name)}</span>
-                        <span class="acc-type">${escapeHtml(a.bank || a.type)}</span>
-                        <span class="acc-bal">${formatCurrency(Calc.accountBalance(d, a))}</span>
+                        <span class="acc-top">
+                            <span class="acc-badge">${escapeHtml((a.bank || a.name).trim().charAt(0).toUpperCase())}</span>
+                            ${a.isMain ? '<span class="acc-main"><i class="fas fa-star"></i> Main</span>' : ''}
+                        </span>
+                        <span class="acc-name">${escapeHtml(a.name)}</span>
+                        <span class="acc-type">${escapeHtml(a.bank || a.type)}${a.last4 ? ` ••${escapeHtml(String(a.last4).split(/[\s,]+/)[0].slice(-4))}` : ''}</span>
+                        <span class="acc-bal">${this.money(Calc.accountBalance(d, a))}</span>
                     </button>`).join('')}
                 <button class="account-chip add" data-action="add-account"><i class="fas fa-plus"></i><span>Add account</span></button>
             </div>
 
-            <div class="quick-actions">
-                <button data-action="add-txn" data-type="Expense"><i class="fas fa-arrow-up expense-c"></i>Expense</button>
-                <button data-action="add-txn" data-type="Income"><i class="fas fa-arrow-down income-c"></i>Income</button>
-                <button data-action="add-txn" data-type="Transfer"><i class="fas fa-arrow-right-arrow-left"></i>Transfer</button>
-                <button data-action="edit-target"><i class="fas fa-bullseye"></i>Target</button>
-            </div>
-
-            ${this.monthSwitcher()}
-
-            <div class="card">
-                <div class="stat-row">
-                    <div class="stat"><span>Income</span><b class="income-c">${formatCurrency(s.income)}</b></div>
-                    <div class="stat"><span>Spent</span><b class="expense-c">${formatCurrency(s.spent)}</b></div>
-                    <div class="stat"><span>Saved</span><b>${formatCurrency(s.saved)}</b></div>
+            <div class="card month-card">
+                <div class="month-card-head">
+                    <button class="icon-btn sm" data-action="month-prev" aria-label="Previous month"><i class="fas fa-chevron-left"></i></button>
+                    <h3>${isCurrent ? 'This month' : monthLabel(this.month)}</h3>
+                    <button class="icon-btn sm" data-action="month-next" aria-label="Next month"><i class="fas fa-chevron-right"></i></button>
                 </div>
-                ${this.targetBlock(s)}
+                <div class="month-body">
+                    ${this.savingsRing(s)}
+                    <div class="month-stats">
+                        <div><span><i class="dot income"></i>Income</span><b>${formatCurrency(s.income)}</b></div>
+                        <div><span><i class="dot expense"></i>Spent</span><b>${formatCurrency(s.spent)}</b></div>
+                        <div class="saved-line"><span>Saved</span><b class="${s.saved < 0 ? 'expense-c' : 'income-c'}">${formatCurrency(s.saved)}</b></div>
+                    </div>
+                </div>
+                ${s.target ? `<p class="month-note">${s.saved >= s.target ? `🎉 You beat your ${formatCurrency(s.target)} target by ${formatCurrency(s.saved - s.target)}` : `${formatCurrency(s.target - s.saved)} more to reach your ${formatCurrency(s.target)} target`}</p>`
+                    : `<button class="target-empty" data-action="edit-target"><i class="fas fa-bullseye"></i> Set a monthly savings target</button>`}
                 <div class="carry-row">
-                    <div><span>Carried in from ${monthLabel(shiftMonth(this.month, -1), true)}</span><b>${formatCurrency(s.openingBalance)}</b></div>
+                    <div><span>Carried in</span><b>${this.money(s.openingBalance)}</b></div>
                     <i class="fas fa-arrow-right"></i>
-                    <div><span>Carry forward to ${monthLabel(shiftMonth(this.month, 1), true)}</span><b>${formatCurrency(s.closingBalance)}</b></div>
+                    <div><span>Carry forward</span><b>${this.money(s.closingBalance)}</b></div>
                 </div>
-                <button class="link-btn" data-action="go" data-view="savings">See month-on-month savings →</button>
+                <button class="link-btn" data-action="go" data-view="savings">Month-on-month savings <i class="fas fa-arrow-right"></i></button>
             </div>
 
             ${this.budgetAlerts()}
@@ -421,8 +489,8 @@ class App {
 
             <div class="card">
                 <div class="card-header">
-                    <h3>Recent Transactions</h3>
-                    <button class="link-btn" data-action="go" data-view="activity">View all →</button>
+                    <h3>Recent</h3>
+                    <button class="link-btn" data-action="go" data-view="activity">See all</button>
                 </div>
                 ${this.txnListHtml([...d.transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 6), false)}
             </div>`;
@@ -533,7 +601,7 @@ class App {
             <div class="menu-item"><span class="menu-icon"><i class="${icon}"></i></span><span class="menu-text"><b>${title}</b><small>${sub}</small></span>
             ${on ? '<span class="badge good"><i class="fas fa-check"></i> On</span>' : `<button class="chip-btn" data-action="${action}">${label}</button>`}</div>`;
         const noLast4 = this.data.accounts.filter(a => !a.archived && !a.last4).length;
-        const family = `
+        const family = APP_CONFIG.apiUrl ? '' : `
             <div class="card flush menu">
                 <div class="card-header padded"><h3>Family</h3></div>
                 <button class="menu-item" data-action="copy-share-link"><span class="menu-icon"><i class="fas fa-link"></i></span><span class="menu-text"><b>${Native.isNative ? 'Copy Google Sheet link' : 'Copy family invite link'}</b><small>${Native.isNative ? 'Family members paste it on the Connect screen, then create their own login' : 'Opens MoneyBook already connected to your Google Sheet'}</small></span></button>
@@ -621,16 +689,16 @@ class App {
 
     /* ========== TRANSACTION LIST ========== */
     txnListHtml(txns, groupByDate = true) {
-        if (!txns.length) return `<div class="empty-state"><i class="fas fa-receipt"></i><p>No transactions yet</p></div>`;
+        if (!txns.length) return `<div class="empty-state"><div class="empty-icon"><i class="fas fa-receipt"></i></div><p>No transactions yet</p><small>Tap <b>+</b> to add one, or share a bank SMS to MoneyBook</small></div>`;
         let lastDate = null;
         return `<div class="txn-list">${txns.map(t => {
             const cat = getCategory(t.category);
-            const header = groupByDate && t.date !== lastDate ? `<div class="date-header">${formatDate(t.date)}</div>` : '';
+            const header = groupByDate && t.date !== lastDate ? `<div class="date-header">${friendlyDate(t.date)}</div>` : '';
             lastDate = t.date;
             const isTransfer = t.type === 'Transfer';
             const sub = isTransfer
                 ? `${escapeHtml(this.accountName(t.accountId))} → ${escapeHtml(this.accountName(t.toAccountId))}`
-                : `${escapeHtml(this.accountName(t.accountId))}${t.paymentMode ? ' · ' + escapeHtml(t.paymentMode) : ''}${groupByDate ? '' : ' · ' + formatDate(t.date)}`;
+                : `${escapeHtml(this.accountName(t.accountId))}${t.paymentMode ? ' · ' + escapeHtml(t.paymentMode) : ''}${groupByDate ? '' : ' · ' + friendlyDate(t.date)}`;
             const amtClass = isTransfer ? 'transfer-c' : t.type === 'Income' ? 'income-c' : 'expense-c';
             const sign = isTransfer ? '' : t.type === 'Income' ? '+' : '-';
             return `${header}

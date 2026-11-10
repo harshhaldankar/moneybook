@@ -20,6 +20,9 @@ const DATA_TABLES = ['Accounts', 'Transactions', 'Recurring', 'Budgets', 'Settin
 const NUMBER_FIELDS = ['amount', 'openingBalance', 'debitDay'];
 const BOOL_FIELDS = ['isMain', 'archived', 'isActive', 'autoPost'];
 const HASH_ROUNDS = 2000;
+// Max number of people who can create a login. Change it in
+// Project Settings → Script properties → MAX_USERS.
+const DEFAULT_MAX_USERS = 10;
 
 /* ---------- HTTP entry points ---------- */
 function doGet() {
@@ -126,6 +129,8 @@ function register(req) {
     if (String(req.password || '').length < 6) throw new Error('Password must be at least 6 characters');
     return withLock(() => {
         if (findUser(userId)) throw new Error('This User ID is already taken');
+        const max = Number(PropertiesService.getScriptProperties().getProperty('MAX_USERS')) || DEFAULT_MAX_USERS;
+        if (readAll('Users').length >= max) throw new Error('New sign-ups are closed. Ask the owner to raise MAX_USERS.');
         const salt = Utilities.getUuid();
         const token = Utilities.getUuid();
         sheet('Users').appendRow(toRow('Users', {
