@@ -56,6 +56,16 @@ const Native = {
         try { await this.plugin('MoneyCapture').remove({ ids }); } catch { /* ignore */ }
     },
 
+    /** Clipboard text, read only when the user taps "Paste SMS". */
+    async readClipboard() {
+        try {
+            if (this.isNative) return (await this.plugin('Clipboard').read()).value || '';
+            return await navigator.clipboard.readText();
+        } catch {
+            return '';
+        }
+    },
+
     /** Id of the message just shared to MoneyBook (cleared once read), or ''. */
     async takeShared() {
         if (!this.isNative) return '';

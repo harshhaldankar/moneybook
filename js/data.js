@@ -509,6 +509,30 @@ const Capture = {
         };
     },
 
+    /** Date written in the SMS (08-11-26, 08/11/2026, 08Nov26, 08-Nov-26…) as a timestamp, or null. */
+    smsDate(text) {
+        const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+        let m = /\b(\d{1,2})[-/ ]?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-/ ,]*(\d{2,4})\b/i.exec(text);
+        let d, mo, y;
+        if (m) { d = +m[1]; mo = months[m[2].toLowerCase()]; y = +m[3]; }
+        else if ((m = /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/.exec(text))) { d = +m[1]; mo = +m[2]; y = +m[3]; }
+        else return null;
+        if (y < 100) y += 2000;
+        const date = new Date(y, mo - 1, d, 12);
+        const ageDays = (Date.now() - date.getTime()) / 864e5;
+        // Ignore impossible dates, future dates and anything older than ~3 months
+        if (isNaN(date) || date.getDate() !== d || ageDays < -1 || ageDays > 92) return null;
+        return date.getTime();
+    },
+
+    /** Parse pasted SMS text. Returns { draft } or { reason: 'sensitive' | 'none' }. */
+    fromText(data, text) {
+        if (TxnParser.isSensitive(text)) return { reason: 'sensitive' };
+        const t = TxnParser.parse(text);
+        if (!t) return { reason: 'none' };
+        return { draft: this.toDraft(data, { ...t, id: `paste-${generateId()}`, source: 'paste', ts: this.smsDate(text) || Date.now() }) };
+    },
+
     learn(data, merchant, category) {
         const key = this.merchantKey(merchant);
         if (!key || !category) return;

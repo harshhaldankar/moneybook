@@ -5,12 +5,14 @@
   "description": "MoneyBook - multi-account expense & savings manager",
   "scripts": {
     "build:web": "node scripts/build-web.js",
-    "sync": "npm run build:web && npx cap sync android"
+    "sync": "npm run build:web && npx cap sync android",
+    "test": "node scripts/test-parser.js"
   },
   "dependencies": {
     "@capacitor/android": "7.6.10",
     "@capacitor/app": "7.1.2",
     "@capacitor/app-launcher": "7.0.4",
+    "@capacitor/clipboard": "7.0.4",
     "@capacitor/core": "7.6.10",
     "@capacitor/local-notifications": "7.0.7"
   },

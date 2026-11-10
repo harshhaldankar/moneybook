@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Unit tests (JS SMS parser)
+        run: npm test
+
       - name: Copy web app into the Android project
         env:
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}

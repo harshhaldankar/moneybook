@@ -338,7 +338,7 @@ body.native .app-bar { padding-top: calc(10px + env(safe-area-inset-top, 24px));
 .qa-icon.expense { background: color-mix(in srgb, var(--expense) 13%, var(--surface)); color: var(--expense); }
 .qa-icon.income { background: color-mix(in srgb, var(--income) 13%, var(--surface)); color: var(--income); }
 .qa-icon.transfer { background: color-mix(in srgb, var(--transfer) 13%, var(--surface)); color: var(--transfer); }
-.qa-icon.target { background: var(--primary-soft); color: var(--primary); }
+.qa-icon.target, .qa-icon.paste { background: var(--primary-soft); color: var(--primary); }
 
 .account-scroller {
     display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 16px; scrollbar-width: none;
@@ -571,6 +571,14 @@ body.native .app-bar { padding-top: calc(10px + env(safe-area-inset-top, 24px));
 .capture-row .rec-info { padding-left: 0; }
 .capture-actions { display: flex; align-items: center; gap: 2px; }
 .capture-note { font-size: 13px; font-weight: 600; color: var(--primary); background: var(--primary-soft); padding: 10px 12px; border-radius: 12px; }
+.capture-note.warn { color: var(--warn); background: var(--warn-soft); }
+textarea {
+    width: 100%; padding: 12px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+    font: inherit; font-size: 15px; color: inherit; resize: vertical; outline: none; min-height: 110px;
+}
+textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-soft); }
+.paste-preview { font-size: 14px; font-weight: 600; min-height: 20px; color: var(--text-secondary); }
+.muted { color: var(--text-muted); }
 
 /* Reports */
 .hbar { padding: 8px 0; }

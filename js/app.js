@@ -326,6 +326,7 @@ class App {
             'enable-notifications': () => Native.requestNotificationPermission().then(() => this.render()),
             'test-notification': () => Native.testNotification(),
             'copy-share-link': () => this.copyShareLink(),
+            'paste-sms': () => this.pasteSms(),
             'install-update': () => this.update && Native.openUpdate(this.update.url),
             'dismiss-update': () => {
                 try { localStorage.setItem('mb_update_dismissed', this.update.version); } catch { /* ignore */ }
@@ -484,7 +485,7 @@ class App {
                 <button data-action="add-txn" data-type="Expense"><span class="qa-icon expense"><i class="fas fa-arrow-up"></i></span>Expense</button>
                 <button data-action="add-txn" data-type="Income"><span class="qa-icon income"><i class="fas fa-arrow-down"></i></span>Income</button>
                 <button data-action="add-txn" data-type="Transfer"><span class="qa-icon transfer"><i class="fas fa-arrow-right-arrow-left"></i></span>Transfer</button>
-                <button data-action="edit-target"><span class="qa-icon target"><i class="fas fa-bullseye"></i></span>Target</button>
+                <button data-action="paste-sms"><span class="qa-icon paste"><i class="fas fa-paste"></i></span>Paste SMS</button>
             </div>
 
             <div class="section-head">
@@ -539,6 +540,62 @@ class App {
                 </div>
                 ${this.txnListHtml([...d.transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 6), false)}
             </div>`;
+    }
+
+    /* ========== PASTE A BANK SMS ========== */
+    /** Reads the clipboard; a bank SMS opens straight into review, anything else shows the paste box. */
+    async pasteSms() {
+        if (!this.activeAccounts().length) { this.toast('Add a bank account first', 'error'); this.openAccountSheet(null, true); return; }
+        const text = (await Native.readClipboard()).trim();
+        if (text) {
+            const r = Capture.fromText(this.data, text);
+            if (r.draft) { this.openTxnSheet(null, 'Expense', r.draft); return; }
+            if (r.reason === 'sensitive') { this.toast('Copied text looks like an OTP or code, so it was not used', 'error'); this.openPasteSheet(); return; }
+        }
+        this.openPasteSheet(text && text.length < 1000 && !TxnParser.isSensitive(text) ? text : '');
+    }
+
+    openPasteSheet(prefill = '') {
+        this.openSheet('Paste bank SMS', `
+            <div class="sheet-form">
+                <ol class="steps">
+                    <li>In your SMS app, long-press the bank message → <b>Copy</b></li>
+                    <li>Come back here and paste it below</li>
+                </ol>
+                <textarea id="pasteText" rows="5" placeholder="e.g. Sent Rs.249.00 From HDFC Bank A/C *4521 To SWIGGY On 08/11/26">${escapeHtml(prefill)}</textarea>
+                <div class="paste-preview" id="pastePreview"></div>
+                <div class="btn-row">
+                    <button type="button" class="btn btn-secondary" id="pasteFromClipboard"><i class="fas fa-paste"></i> Paste</button>
+                    <button type="button" class="btn btn-primary grow" id="pasteContinue" disabled><i class="fas fa-arrow-right"></i> Continue</button>
+                </div>
+                <p class="hint"><i class="fas fa-shield-halved"></i> Only the amount, account digits, merchant and date are used. OTPs are refused and the message itself isn't saved.</p>
+            </div>`, body => {
+            const area = body.querySelector('#pasteText');
+            const preview = body.querySelector('#pastePreview');
+            const cont = body.querySelector('#pasteContinue');
+            let result = null;
+            const update = () => {
+                const text = area.value.trim();
+                result = text ? Capture.fromText(this.data, text) : null;
+                cont.disabled = !result?.draft;
+                if (!text) { preview.innerHTML = ''; return; }
+                if (result.reason === 'sensitive') { preview.innerHTML = '<span class="expense-c"><i class="fas fa-ban"></i> Looks like an OTP or code, so it can\'t be used</span>'; return; }
+                if (!result.draft) { preview.innerHTML = '<span class="muted"><i class="fas fa-circle-question"></i> No debit or credit found yet</span>'; return; }
+                const d = result.draft;
+                preview.innerHTML = `<span class="${d.type === 'Income' ? 'income-c' : 'expense-c'}"><i class="fas fa-check"></i> ${d.type === 'Income' ? 'Received' : 'Spent'} ${formatCurrency(d.amount)}</span>${d.note ? ` · ${escapeHtml(d.note)}` : ''} · ${friendlyDate(d.date)}`;
+            };
+            area.addEventListener('input', update);
+            body.querySelector('#pasteFromClipboard').addEventListener('click', async () => {
+                const text = await Native.readClipboard();
+                if (!text) { this.toast('Clipboard is empty. Copy the SMS first.', 'error'); return; }
+                area.value = TxnParser.isSensitive(text) ? '' : text;
+                if (!area.value) this.toast('Copied text looks like an OTP or code, so it was not used', 'error');
+                update();
+            });
+            cont.addEventListener('click', () => { if (result?.draft) this.openTxnSheet(null, 'Expense', result.draft); });
+            update();
+            if (!prefill) setTimeout(() => area.focus(), 250);
+        });
     }
 
     /* ========== SHARED BANK SMS waiting for review ========== */
@@ -654,12 +711,13 @@ class App {
 
         el.innerHTML = Native.isNative ? `
             <div class="card">
-                <h3><i class="fas fa-share-nodes"></i> Add a bank SMS in 2 taps</h3>
+                <h3><i class="fas fa-paste"></i> Add a bank SMS in seconds</h3>
                 <ol class="steps">
-                    <li>In <b>Messages</b>, long-press a debit or credit SMS from your bank</li>
-                    <li>Tap <b>Share</b> → <b>MoneyBook</b></li>
-                    <li>Amount, account, merchant and category are filled in. Tap <b>Save</b></li>
+                    <li>In your SMS app, long-press a debit or credit SMS from your bank → <b>Copy</b></li>
+                    <li>Open MoneyBook and tap <b>Paste SMS</b> on Home</li>
+                    <li>Amount, account, merchant, date and category are filled in. Tap <b>Save</b></li>
                 </ol>
+                <p class="hint">If your SMS app has <b>Share</b>, you can also share the message straight to MoneyBook.</p>
                 <p class="hint"><i class="fas fa-shield-halved"></i> MoneyBook has no permission to read your SMS or notifications. It only sees the message you share, OTPs are refused, and the message text is never saved.</p>
             </div>
             <div class="card flush menu">
@@ -1300,7 +1358,8 @@ class App {
 
         const html = `
             <form id="txnForm" class="sheet-form">
-                ${draft ? `<div class="capture-note"><i class="fas fa-share-nodes"></i> Filled in from the message you shared${draft.last4 ? ` · ••${escapeHtml(draft.last4)}` : ''}${draft.accountId ? '' : ' · <b>pick the account</b>'}</div>` : ''}
+                ${draft ? `<div class="capture-note"><i class="fas ${draft.source === 'paste' ? 'fa-paste' : 'fa-share-nodes'}"></i> Filled in from the ${draft.source === 'paste' ? 'pasted' : 'shared'} SMS${draft.last4 ? ` · ••${escapeHtml(draft.last4)}` : ''}${draft.accountId ? '' : ' · <b>pick the account</b>'}</div>
+                ${d.transactions.some(t => t.type === draft.type && Math.abs(t.amount - draft.amount) < 0.01 && t.date === draft.date) ? `<div class="capture-note warn"><i class="fas fa-triangle-exclamation"></i> You already have ${formatCurrency(draft.amount)} on ${friendlyDate(draft.date)}. Check it isn't a duplicate.</div>` : ''}` : ''}
                 <div class="segmented type-tabs">
                     ${['Expense', 'Income', 'Transfer'].map(t => `<button type="button" data-type="${t}" class="${state.type === t ? 'active' : ''}">${t}</button>`).join('')}
                 </div>
