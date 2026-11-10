@@ -5,4 +5,6 @@
    ======================================== */
 const APP_CONFIG = {
     apiUrl: '',
+    // GitHub repo whose latest release the Android app checks for updates
+    updateRepo: 'harshhaldankar/moneybook',
 };

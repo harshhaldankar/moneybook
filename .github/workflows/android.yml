@@ -74,6 +74,8 @@ jobs:
           tag_name: v${{ env.VERSION_NAME }}
           name: MoneyBook ${{ env.VERSION_NAME }}
           body: |
+            What's new: ${{ github.event.head_commit.message || 'Improvements and fixes' }}
+
             Download **MoneyBook.apk** below and open it on your Android phone to install or update.
             Built from ${{ github.sha }}.
           files: ${{ runner.temp }}/MoneyBook.apk

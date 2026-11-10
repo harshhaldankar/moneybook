@@ -23,7 +23,7 @@ const Native = {
         document.body.classList.add('native');
         const App = this.plugin('App');
         App.addListener('appStateChange', ({ isActive }) => {
-            if (isActive && Store.userId) { Store.flush(); app.loadCaptures(); }
+            if (isActive && Store.userId) { Store.flush(); app.loadCaptures(); app.refreshUpdate(); }
         });
         App.addListener('backButton', () => {
             if (document.getElementById('sheetOverlay').classList.contains('show')) app.closeSheet();
@@ -71,6 +71,51 @@ const Native = {
     async requestNotificationPermission() {
         if (!this.isNative) return;
         await this.plugin('LocalNotifications').requestPermissions().catch(() => {});
+    },
+
+    /* ---------- app updates (APK is installed outside the Play Store) ---------- */
+    UPDATE_KEY: 'mb_update',
+    UPDATE_EVERY_MS: 6 * 60 * 60 * 1000,
+
+    /** Installed version, e.g. { version: '2.1.7', build: '7' }. */
+    async appInfo() {
+        if (!this.isNative) return null;
+        try { return await this.plugin('App').getInfo(); } catch { return null; }
+    },
+
+    /**
+     * Looks for a newer release on GitHub (at most every 6 hours unless forced).
+     * Release tags are v2.1.<build>, and the build number is the APK's versionCode.
+     * Returns { version, notes, url } or null.
+     */
+    async checkForUpdate(force = false) {
+        if (!this.isNative || !APP_CONFIG.updateRepo) return null;
+        const info = await this.appInfo();
+        if (!info) return null;
+        let cached = null;
+        try { cached = JSON.parse(localStorage.getItem(this.UPDATE_KEY)); } catch { /* none */ }
+        if (!force && cached && Date.now() - cached.checkedAt < this.UPDATE_EVERY_MS) {
+            return cached.build > Number(info.build) ? cached : null;
+        }
+        try {
+            const res = await fetch(`https://api.github.com/repos/${APP_CONFIG.updateRepo}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } });
+            if (!res.ok) return null;
+            const rel = await res.json();
+            const apk = (rel.assets || []).find(a => /\.apk$/i.test(a.name));
+            const build = Number(String(rel.tag_name || '').split('.').pop());
+            const notes = String(rel.body || '').split('\n').map(l => l.replace(/^[#*\s-]+|\*\*/g, '').trim())
+                .find(l => l && !/^(download|built from)/i.test(l)) || '';
+            const latest = { version: String(rel.tag_name).replace(/^v/, ''), build, notes: notes.replace(/^What's new:\s*/i, ''), url: apk?.browser_download_url || rel.html_url, checkedAt: Date.now() };
+            localStorage.setItem(this.UPDATE_KEY, JSON.stringify(latest));
+            return build > Number(info.build) ? latest : null;
+        } catch {
+            return null;
+        }
+    },
+
+    openUpdate(url) {
+        // Opens the APK download in the phone's browser; Android's installer takes it from there
+        this.plugin('AppLauncher').openUrl({ url }).catch(() => { window.location.href = url; });
     },
 
     /* ---------- reminders ---------- */

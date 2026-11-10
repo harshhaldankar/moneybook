@@ -19,6 +19,8 @@ class App {
         this.charts = {};
         this.idleTimer = null;
         this.pendingCaptures = [];
+        this.update = null;      // newer APK on GitHub, if any
+        this.appVersion = null;
     }
 
     get data() { return Store.data; }
@@ -189,6 +191,7 @@ class App {
         this.resetIdleTimer();
         Store.flush();
         Native.onLogin(this.data);
+        this.refreshUpdate();
         if (Store.importedPrevious) {
             Store.importedPrevious = false;
             this.toast('Your earlier data was moved into the Google Sheet', 'success');
@@ -323,6 +326,16 @@ class App {
             'enable-notifications': () => Native.requestNotificationPermission().then(() => this.render()),
             'test-notification': () => Native.testNotification(),
             'copy-share-link': () => this.copyShareLink(),
+            'install-update': () => this.update && Native.openUpdate(this.update.url),
+            'dismiss-update': () => {
+                try { localStorage.setItem('mb_update_dismissed', this.update.version); } catch { /* ignore */ }
+                this.render();
+            },
+            'check-update': async () => {
+                this.toast('Checking for updates…');
+                await this.refreshUpdate(true);
+                if (!this.update) this.toast(`You're on the latest version${this.appVersion ? ` (${this.appVersion})` : ''}`, 'success');
+            },
             'lock': () => this.lock(),
             'logout': () => this.logout(),
         };
@@ -345,6 +358,37 @@ class App {
     activeAccounts() { return this.data.accounts.filter(a => !a.archived); }
 
     /* ========== HOME ========== */
+    /* ========== APP UPDATES ========== */
+    async refreshUpdate(force = false) {
+        if (!Native.isNative) return;
+        const info = await Native.appInfo();
+        this.appVersion = info?.version || null;
+        const found = await Native.checkForUpdate(force);
+        const changed = JSON.stringify(found) !== JSON.stringify(this.update);
+        this.update = found;
+        if (force && found) localStorage.removeItem('mb_update_dismissed');
+        if (changed || force) this.render();
+    }
+
+    updateCard() {
+        const u = this.update;
+        let dismissed = null;
+        try { dismissed = localStorage.getItem('mb_update_dismissed'); } catch { /* ignore */ }
+        if (!u || dismissed === u.version) return '';
+        return `
+            <div class="card update-card">
+                <span class="update-icon"><i class="fas fa-arrow-down"></i></span>
+                <div class="update-text">
+                    <b>Update available · v${escapeHtml(u.version)}</b>
+                    <small>${escapeHtml(u.notes || 'Improvements and fixes')}</small>
+                </div>
+                <div class="update-actions">
+                    <button class="btn btn-primary sm" data-action="install-update">Update</button>
+                    <button class="link-btn" data-action="dismiss-update">Later</button>
+                </div>
+            </div>`;
+    }
+
     /** Balances can be hidden on screen (like a bank app); stored per device. */
     get hideBalances() {
         try { return localStorage.getItem('mb_hide_balances') === '1'; } catch { return false; }
@@ -414,6 +458,7 @@ class App {
         el.innerHTML = `
             ${header}
 
+            ${this.updateCard()}
             ${this.capturesCard()}
 
             <div class="hero-card">
@@ -1163,7 +1208,11 @@ class App {
             <div class="card flush menu">
                 <button class="menu-item danger" data-action="delete-profile"><span class="menu-icon"><i class="fas fa-user-xmark"></i></span><span class="menu-text"><b>Remove from this device</b><small>Your data stays safe in the Google Sheet</small></span></button>
             </div>
-            <p class="hint center"><i class="fas fa-table"></i> Your data is saved in the connected Google Sheet and cached on this device for offline use.</p>`;
+            ${Native.isNative ? `
+            <div class="card flush menu">
+                <button class="menu-item" data-action="check-update"><span class="menu-icon"><i class="fas fa-rotate"></i></span><span class="menu-text"><b>Check for updates</b><small>MoneyBook ${escapeHtml(this.appVersion || '')}${this.update ? ` · v${escapeHtml(this.update.version)} available` : ''}</small></span>${this.update ? '<span class="badge main">New</span>' : ''}</button>
+            </div>` : ''}
+            <p class="hint center"><i class="fas fa-shield-halved"></i> Your data is backed up online and cached on this device for offline use.</p>`;
         document.getElementById('importFile').addEventListener('change', e => this.importData(e.target.files[0]));
         this.bindSettingToggles('view-profile');
     }
