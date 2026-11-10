@@ -1,13 +1,13 @@
 # MoneyBook — Expense & Savings Manager
 
-An Android app (plus website) for tracking multiple bank accounts, spending and monthly savings. It captures bank SMS and UPI payments automatically, sends reminders, and keeps your data in your own Google Sheet.
+An Android app (plus website) for tracking multiple bank accounts, spending and monthly savings. Add a bank SMS in two taps with **Share → MoneyBook**, get reminders, and keep your data in your own Google Sheet.
 
 ## Features
 
-- **Auto-capture (Android):**
-  - Bank debit/credit SMS and payment alerts from GPay, PhonePe, Paytm, BHIM and bank apps become transactions you save with one tap.
-  - OTPs, personal messages, offers, bill reminders and failed payments are ignored and never stored.
-  - The app learns each merchant's category, and can save known merchants automatically.
+- **Share a bank SMS (Android):**
+  - Long-press a debit/credit SMS → **Share → MoneyBook**. Amount, account (by last 4 digits), merchant and category are filled in; tap Save.
+  - MoneyBook has **no SMS or notification permission**. It only sees what you share. OTPs, offers, bill reminders and failed payments are refused, and the message text is never stored.
+  - The app learns each merchant's category, and can save known merchants instantly.
 - **Auto-debits without SMS:** SIP, EMI, rent and subscriptions are recorded by the Google Sheet on their debit day, with a reminder the day before.
 - **Reminders:** a daily nudge for cash spends, auto-debit reminders, budget alerts at 80% and 100%, and a monthly savings summary.
 - **Any number of bank accounts** with a Main account. Shows the total balance, the Main balance and the other accounts' balance.
@@ -21,8 +21,8 @@ An Android app (plus website) for tracking multiple bank accounts, spending and 
 ```
 Android APK (Capacitor)                              Website (GitHub Pages)
  ├─ web UI: index.html, css/, js/                     same web UI
- ├─ SmsReceiver + PaymentNotificationListener              │
- │    └─ TxnParser (drops OTPs, keeps only amount,         │
+ ├─ Share target ("Share → MoneyBook")                    │
+ │    └─ TxnParser (refuses OTPs, keeps only amount,       │
  │       type, last 4 digits, merchant)                    │
  ├─ local notifications (reminders)                        │
  └─ offline cache + sync queue ───────────┬────────────────┘
@@ -40,10 +40,10 @@ Android APK (Capacitor)                              Website (GitHub Pages)
 2. **Install the Android app:**
    - Download **MoneyBook.apk** from the [latest release](https://github.com/harshhaldankar/moneybook/releases/latest) on your phone, open it, and allow "install unknown apps" when asked.
    - Paste your Sheet link, then log in.
-   - Turn on auto-capture under **More → Auto-Capture & Reminders**.
+   - Allow notifications under **More → Share SMS & Reminders**.
 3. **Website (optional):** https://harshhaldankar.github.io/moneybook/
 
-> Reading SMS isn't allowed for apps on the Play Store, so MoneyBook is installed directly from the APK. It only uses `RECEIVE_SMS` (new incoming messages). It cannot read your existing inbox.
+> The APK asks for only two permissions: **Internet** (to sync with your Sheet) and **Notifications** (reminders). Because it has no SMS or notification-reading access, Google Play Protect installs it like any normal app.
 
 ## Development
 
@@ -66,7 +66,7 @@ index.html, css/, js/       Web UI (shared by website and APK)
   js/app.js                 Views and forms
 apps-script/                Google Sheets backend + setup guide
 android/                    Capacitor Android project
-  app/src/main/java/in/moneybook/app/capture/   SMS + notification capture (TxnParser is unit-tested)
+  app/src/main/java/in/moneybook/app/capture/   Share handling + TxnParser (unit-tested)
 .github/workflows/          APK build + release
 scripts/build-web.js        Copies web files into www/ for Capacitor
 ```

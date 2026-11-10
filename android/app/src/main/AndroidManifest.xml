@@ -22,28 +22,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- "Share → MoneyBook" from Messages: only the text the user chooses to share -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
         </activity>
-
-        <!-- Bank SMS: only incoming messages (RECEIVE_SMS), never the inbox -->
-        <receiver
-            android:name=".capture.SmsReceiver"
-            android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
-            <intent-filter>
-                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
-            </intent-filter>
-        </receiver>
-
-        <!-- Payment app notifications (user enables it in Settings → Notification access) -->
-        <service
-            android:name=".capture.PaymentNotificationListener"
-            android:exported="true"
-            android:label="MoneyBook payment capture"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -59,6 +45,5 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

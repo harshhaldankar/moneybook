@@ -5,10 +5,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Turns a bank SMS / payment-app notification into a transaction, or returns null.
+ * Turns a bank SMS the user shared to MoneyBook into a transaction, or returns null.
  *
  * Security rules (applied before anything is stored):
- *  - Only DLT bank sender IDs (e.g. "AX-HDFCBK") are accepted for SMS; phone numbers are ignored.
  *  - Any text that looks like an OTP / PIN / verification code is rejected outright.
  *  - Reminders, offers, failed or pending payments are rejected.
  *  - Only amount, debit/credit, last 4 digits, merchant and mode are extracted; the message text is never kept.

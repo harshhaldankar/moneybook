@@ -440,8 +440,8 @@ const Store = {
 };
 
 /* ========================================
-   CAPTURE - turns detected bank SMS / UPI notifications into transaction drafts
-   (The Android side has already dropped OTPs and non-bank messages.)
+   CAPTURE - turns a bank SMS the user shared into a transaction draft
+   (The Android side has already refused OTPs and anything that isn't a debit/credit.)
    ======================================== */
 const MERCHANT_HINTS = [
     [/swiggy|zomato|domino|mcdonald|kfc|pizza|cafe|restaurant|starbucks|eatsure/i, 'food'],
@@ -492,7 +492,7 @@ const Capture = {
             paymentMode: cap.mode || 'UPI',
             note: cap.merchant || '',
             last4: cap.last4 || '',
-            source: cap.source || 'sms',
+            source: cap.source || 'share',
         };
     },
 

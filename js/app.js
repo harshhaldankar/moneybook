@@ -6,7 +6,7 @@ const TOP_VIEWS = ['home', 'activity', 'savings', 'more'];
 const VIEW_TITLES = {
     home: 'Home', activity: 'Activity', savings: 'Savings', more: 'More',
     accounts: 'Bank Accounts', budgets: 'Budgets', recurring: 'Auto-Debits', reports: 'Reports', profile: 'Profile & Security',
-    automation: 'Auto-Capture & Reminders',
+    automation: 'Share SMS & Reminders',
 };
 const IDLE_LOCK_MS = 10 * 60 * 1000;
 const SYNC_INTERVAL_MS = 60 * 1000;
@@ -316,8 +316,6 @@ class App {
             'review-capture': () => this.openTxnSheet(null, 'Expense', this.pendingCaptures.find(c => c.captureId === ds.id)),
             'save-capture': () => this.quickSaveCapture(ds.id),
             'ignore-capture': () => this.ignoreCapture(ds.id),
-            'enable-sms': () => Native.enableSms().then(() => this.render()),
-            'enable-upi': () => Native.openNotificationAccess(),
             'enable-notifications': () => Native.requestNotificationPermission().then(() => this.render()),
             'test-notification': () => Native.testNotification(),
             'copy-share-link': () => this.copyShareLink(),
@@ -430,7 +428,7 @@ class App {
             </div>`;
     }
 
-    /* ========== DETECTED TRANSACTIONS (bank SMS / UPI apps) ========== */
+    /* ========== SHARED BANK SMS waiting for review ========== */
     async loadCaptures() {
         if (!Store.data) return;
         const raw = await Native.getCaptures();
@@ -442,11 +440,17 @@ class App {
             if (ready.length) {
                 ready.forEach(c => this.data.transactions.push(this.draftToTxn(c)));
                 await this.resolveCaptures(ready.map(c => c.captureId), false);
-                await this.persist(`${ready.length} detected transaction${ready.length === 1 ? '' : 's'} saved automatically`);
+                await Native.takeShared();
+                await this.persist(ready.length === 1
+                    ? `${formatCurrency(ready[0].amount)} at ${ready[0].note || 'merchant'} saved as ${getCategory(ready[0].category).name}`
+                    : `${ready.length} shared transactions saved`);
                 return;
             }
         }
+        const sharedId = await Native.takeShared();
+        const shared = sharedId && this.pendingCaptures.find(c => c.captureId === sharedId);
         if (this.view === 'home') this.render();
+        if (shared) this.openTxnSheet(null, 'Expense', shared);
     }
 
     draftToTxn(c) {
@@ -483,7 +487,7 @@ class App {
         return `
             <div class="card capture-card">
                 <div class="card-header">
-                    <h3><i class="fas fa-wand-magic-sparkles"></i> ${list.length} detected transaction${list.length === 1 ? '' : 's'}</h3>
+                    <h3><i class="fas fa-share-nodes"></i> ${list.length} shared transaction${list.length === 1 ? '' : 's'} to review</h3>
                 </div>
                 ${list.slice(0, 5).map(c => {
                     const acc = c.accountId ? this.accountName(c.accountId) : (c.last4 ? `••${c.last4} (unknown)` : 'Pick account');
@@ -536,11 +540,17 @@ class App {
             </div>`;
 
         el.innerHTML = Native.isNative ? `
+            <div class="card">
+                <h3><i class="fas fa-share-nodes"></i> Add a bank SMS in 2 taps</h3>
+                <ol class="steps">
+                    <li>In <b>Messages</b>, long-press a debit or credit SMS from your bank</li>
+                    <li>Tap <b>Share</b> → <b>MoneyBook</b></li>
+                    <li>Amount, account, merchant and category are filled in. Tap <b>Save</b></li>
+                </ol>
+                <p class="hint"><i class="fas fa-shield-halved"></i> MoneyBook has no permission to read your SMS or notifications. It only sees the message you share, OTPs are refused, and the message text is never saved.</p>
+            </div>
             <div class="card flush menu">
-                <div class="card-header padded"><h3>Auto-capture</h3></div>
-                ${statusRow(status.sms, 'fas fa-comment-sms', 'Bank SMS', 'Reads only debit/credit SMS from bank senders. OTPs and personal messages are ignored and never stored.', 'enable-sms', 'Turn on')}
-                ${statusRow(status.upi, 'fas fa-bell', 'UPI app alerts', 'Payment notifications from GPay, PhonePe, Paytm, BHIM and bank apps.', 'enable-upi', 'Allow access')}
-                ${toggle('autoSaveKnown', 'fas fa-bolt', 'Save known merchants automatically', 'Skips the review step when you have categorised that merchant before')}
+                ${toggle('autoSaveKnown', 'fas fa-bolt', 'Save known merchants instantly', 'When you share an SMS from a merchant you\'ve categorised before, save it without the review step')}
             </div>
             ${noLast4 ? `<div class="card tint-warn"><div class="overall"><i class="fas fa-circle-info"></i><div><b>Add last 4 digits to ${noLast4} account${noLast4 === 1 ? '' : 's'}</b><small>So detected SMS land in the right account. <button class="link-btn" data-action="go" data-view="accounts">Open accounts →</button></small></div></div></div>` : ''}
             <div class="card flush menu">
@@ -554,7 +564,7 @@ class App {
             ${family}` : `
             <div class="card">
                 <h3><i class="fas fa-mobile-screen"></i> Get the Android app</h3>
-                <p class="hint">Auto-capture from bank SMS and UPI apps, and reminder notifications, work in the MoneyBook Android app. Download the APK from the <a href="https://github.com/harshhaldankar/moneybook/releases/latest" target="_blank" rel="noopener">latest release</a>, then log in with the same User ID. Your data syncs through the Google Sheet.</p>
+                <p class="hint">Adding bank SMS with Share → MoneyBook, and reminder notifications, work in the MoneyBook Android app. Download the APK from the <a href="https://github.com/harshhaldankar/moneybook/releases/latest" target="_blank" rel="noopener">latest release</a>, then log in with the same User ID. Your data syncs through the Google Sheet.</p>
             </div>
             ${family}`;
         this.bindSettingToggles('view-automation');
@@ -830,7 +840,7 @@ class App {
                 <i class="fas fa-chevron-right"></i>
             </div>
             <div class="card flush menu">
-                ${item('automation', 'fas fa-wand-magic-sparkles', 'Auto-Capture & Reminders', Native.isNative ? 'Bank SMS, UPI alerts, notifications' : 'Reminders and setup for the Android app')}
+                ${item('automation', 'fas fa-share-nodes', 'Share SMS & Reminders', Native.isNative ? 'Share bank SMS, reminders' : 'Reminders and setup for the Android app')}
                 ${item('accounts', 'fas fa-building-columns', 'Bank Accounts', `${this.activeAccounts().length} active · add, edit, set main`)}
                 ${item('budgets', 'fas fa-chart-simple', 'Budgets', 'Monthly limits per category')}
                 ${item('recurring', 'fas fa-repeat', 'Auto-Debits', 'SIPs, EMIs, rent, subscriptions')}
@@ -1173,7 +1183,7 @@ class App {
 
         const html = `
             <form id="txnForm" class="sheet-form">
-                ${draft ? `<div class="capture-note"><i class="fas ${draft.source === 'sms' ? 'fa-comment-sms' : 'fa-bell'}"></i> Detected from ${draft.source === 'sms' ? 'bank SMS' : 'a payment app'}${draft.last4 ? ` · ••${escapeHtml(draft.last4)}` : ''}${draft.accountId ? '' : ' · <b>pick the account</b>'}</div>` : ''}
+                ${draft ? `<div class="capture-note"><i class="fas fa-share-nodes"></i> Filled in from the message you shared${draft.last4 ? ` · ••${escapeHtml(draft.last4)}` : ''}${draft.accountId ? '' : ' · <b>pick the account</b>'}</div>` : ''}
                 <div class="segmented type-tabs">
                     ${['Expense', 'Income', 'Transfer'].map(t => `<button type="button" data-type="${t}" class="${state.type === t ? 'active' : ''}">${t}</button>`).join('')}
                 </div>

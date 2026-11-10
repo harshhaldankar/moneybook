@@ -21,7 +21,7 @@ Only the person who owns the data (you) does this. Family members then just past
 
 ## 4. Connect the app
 - **Android app or website:** paste that URL on the **Connect your Google Sheet** screen, then create your login.
-- **Family members:** in MoneyBook go to **More → Auto-Capture & Reminders → Family** and copy the link for them. Each person creates their own User ID and password, and sees only their own data in the app.
+- **Family members:** in MoneyBook go to **More → Share SMS & Reminders → Family** and copy the link for them. Each person creates their own User ID and password, and sees only their own data in the app.
 
 ## Updating the script later
 Paste the new `Code.gs`, then **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**. The URL stays the same.

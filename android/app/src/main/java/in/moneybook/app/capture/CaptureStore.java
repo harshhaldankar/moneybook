@@ -11,14 +11,14 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Detected transactions waiting for review in the app.
- * Stores only parsed fields (never the SMS / notification text), in app-private storage.
+ * Shared transactions waiting for review in the app.
+ * Stores only parsed fields (never the shared text), in app-private storage.
  */
 public final class CaptureStore {
     private static final String PREFS = "moneybook_captures";
     private static final String KEY = "items";
     private static final int MAX_ITEMS = 200;
-    private static final long DUPLICATE_WINDOW_MS = 15 * 60 * 1000;
+    private static final long DUPLICATE_WINDOW_MS = 2 * 60 * 1000;   // same message shared twice
 
     private CaptureStore() {}
 
@@ -39,8 +39,8 @@ public final class CaptureStore {
     }
 
     /**
-     * Adds a capture unless the same payment was already seen (bank SMS and the UPI app
-     * usually both report it). Returns the stored item, or null for a duplicate.
+     * Adds a capture unless the same payment was already shared recently.
+     * Returns the stored item, or null for a duplicate.
      */
     public static synchronized JSONObject add(Context ctx, TxnParser.Txn t, String source, long ts) {
         JSONArray items = list(ctx);
@@ -74,6 +74,17 @@ public final class CaptureStore {
         } catch (JSONException e) {
             return null;
         }
+    }
+
+    /** The item from the most recent share, so the app can open it for review straight away. */
+    public static void setLastShared(Context ctx, String id) {
+        prefs(ctx).edit().putString("lastShared", id).apply();
+    }
+
+    public static String takeLastShared(Context ctx) {
+        String id = prefs(ctx).getString("lastShared", "");
+        prefs(ctx).edit().remove("lastShared").apply();
+        return id;
     }
 
     public static synchronized void remove(Context ctx, Set<String> ids) {

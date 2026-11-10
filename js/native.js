@@ -1,7 +1,8 @@
 /* ========================================
    NATIVE BRIDGE - Android-only features (via Capacitor)
-   Auto-capture from bank SMS / UPI apps, local reminder notifications,
+   "Share → MoneyBook" for bank SMS, local reminder notifications,
    back button and app-resume handling. In a browser every method is a no-op.
+   The app has no SMS or notification-reading permission: it only sees text the user shares.
    ======================================== */
 
 const NOTIF = { DAILY: 1, MONTHLY: 2, DUE_BASE: 100, DUE_MAX: 199, BUDGET_BASE: 300, TEST: 999 };
@@ -30,7 +31,7 @@ const Native = {
             else if (app.view !== 'home') app.navigate('home');
             else App.minimizeApp();
         });
-        // Fired by the Android side when a bank SMS / UPI alert is captured while the app is open
+        // Fired by the Android side when a message is shared to MoneyBook while the app is open
         this.plugin('MoneyCapture').addListener('captured', () => app.loadCaptures());
         try {
             await this.plugin('LocalNotifications').createChannel({ id: 'reminders', name: 'Reminders', description: 'Daily and auto-debit reminders, budget alerts', importance: 4 });
@@ -44,7 +45,7 @@ const Native = {
         this.app.loadCaptures();
     },
 
-    /* ---------- auto-capture ---------- */
+    /* ---------- shared messages ---------- */
     async getCaptures() {
         if (!this.isNative) return [];
         try { return (await this.plugin('MoneyCapture').getPending()).items || []; } catch { return []; }
@@ -55,22 +56,16 @@ const Native = {
         try { await this.plugin('MoneyCapture').remove({ ids }); } catch { /* ignore */ }
     },
 
+    /** Id of the message just shared to MoneyBook (cleared once read), or ''. */
+    async takeShared() {
+        if (!this.isNative) return '';
+        try { return (await this.plugin('MoneyCapture').takeShared()).id || ''; } catch { return ''; }
+    },
+
     async status() {
-        if (!this.isNative) return { sms: false, upi: false, notifications: false };
-        const [cap, perm] = await Promise.all([
-            this.plugin('MoneyCapture').status().catch(() => ({})),
-            this.plugin('LocalNotifications').checkPermissions().catch(() => ({})),
-        ]);
-        return { sms: !!cap.sms, upi: !!cap.upi, notifications: perm.display === 'granted' };
-    },
-
-    async enableSms() {
-        if (!this.isNative) return;
-        await this.plugin('MoneyCapture').requestSmsPermission().catch(() => {});
-    },
-
-    openNotificationAccess() {
-        if (this.isNative) this.plugin('MoneyCapture').openNotificationAccess().catch(() => {});
+        if (!this.isNative) return { notifications: false };
+        const perm = await this.plugin('LocalNotifications').checkPermissions().catch(() => ({}));
+        return { notifications: perm.display === 'granted' };
     },
 
     async requestNotificationPermission() {
@@ -106,7 +101,7 @@ const Native = {
             const [hour, minute] = String(s.reminderTime || '21:00').split(':').map(Number);
             list.push({
                 id: NOTIF.DAILY, title: 'Any cash spends today?',
-                body: 'UPI and card payments are captured automatically. Add cash spends in a few seconds.',
+                body: 'Share today\'s bank SMS to MoneyBook, or add cash spends in a few seconds.',
                 schedule: { on: { hour, minute }, allowWhileIdle: true },
             });
         }
