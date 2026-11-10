@@ -8,6 +8,7 @@ An Android app (plus website) for tracking multiple bank accounts, spending and 
   - Long-press a debit/credit SMS → **Share → MoneyBook**. Amount, account (by last 4 digits), merchant and category are filled in; tap Save.
   - MoneyBook has **no SMS or notification permission**. It only sees what you share. OTPs, offers, bill reminders and failed payments are refused, and the message text is never stored.
   - The app learns each merchant's category, and can save known merchants instantly.
+- **Paste SMS / screenshots / statements:** copy a bank SMS and tap **Paste SMS**; share or pick a screenshot of an SMS or a GPay/PhonePe payment screen (read on-device with ML Kit); or import a CSV/Excel bank statement from net banking (duplicates and rows before the opening balance are skipped).
 - **Auto-debits without SMS:** SIP, EMI, rent and subscriptions are recorded by the Google Sheet on their debit day, with a reminder the day before.
 - **Reminders:** a daily nudge for cash spends, auto-debit reminders, budget alerts at 80% and 100%, and a monthly savings summary.
 - **Any number of bank accounts** with a Main account. Shows the total balance, the Main balance and the other accounts' balance.

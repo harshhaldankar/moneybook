@@ -86,6 +86,16 @@ public class TxnParserTest {
         ok("Rahul Verma paid you ₹100", "credit", 100, "", "Rahul Verma", null);
     }
 
+    @Test public void gpayReceiptScreenshot() {
+        ok("To Swiggy\n₹250\nCompleted\n10 Nov 2026, 8:15 pm\nUPI transaction ID\n431234567895\nTo: SWIGGY\nswiggy@icici\nFrom: HARSH HALDANKAR (HDFC Bank)\nXXXX4521",
+            "debit", 250, "4521", "Swiggy", "UPI");
+    }
+
+    @Test public void phonepeReceivedReceipt() {
+        ok("Received from\nRahul Verma\n₹1,200\nTransaction Successful\nUTR: 431234567896\nCredited to\nXXXXXX0123",
+            "credit", 1200, "0123", "Rahul Verma", null);
+    }
+
     /* ---------- must be rejected ---------- */
     @Test public void rejectsOtp() {
         assertNull(TxnParser.parse("123456 is your OTP for txn of Rs.2,500 at AMAZON on HDFC Bank Card XX9012. Valid for 10 mins. Do not share OTP"));

@@ -66,6 +66,12 @@ const Native = {
         }
     },
 
+    /** On-device text recognition of a picked image (Android only). Returns { text, blocks }. */
+    async scanImage(dataUrl) {
+        if (!this.isNative) throw new Error('Screenshot scanning works in the Android app');
+        return this.plugin('MoneyCapture').scanImage({ data: dataUrl });
+    },
+
     /** Id of the message just shared to MoneyBook (cleared once read), or ''. */
     async takeShared() {
         if (!this.isNative) return '';

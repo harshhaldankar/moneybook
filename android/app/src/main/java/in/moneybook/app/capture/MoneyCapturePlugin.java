@@ -56,6 +56,22 @@ public class MoneyCapturePlugin extends Plugin {
         call.resolve();
     }
 
+    /** Reads text from an image the user picked in the app (base64 or data URL). */
+    @PluginMethod
+    public void scanImage(PluginCall call) {
+        String data = call.getString("data");
+        if (data == null || data.isEmpty()) { call.reject("No image"); return; }
+        ScreenshotReader.fromBase64(data, new ScreenshotReader.Callback() {
+            @Override public void onText(String text, java.util.List<String> blocks) {
+                JSObject ret = new JSObject();
+                ret.put("text", text);
+                ret.put("blocks", new JSArray(blocks));
+                call.resolve(ret);
+            }
+            @Override public void onError(String message) { call.reject(message); }
+        });
+    }
+
     /** Returns (and clears) the id of the item that was just shared, if any. */
     @PluginMethod
     public void takeShared(PluginCall call) {

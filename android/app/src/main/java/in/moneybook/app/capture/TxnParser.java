@@ -44,6 +44,12 @@ public final class TxnParser {
         "(?i)\\b(credited|credit(ed)? (by|with|of)|received|deposited|refund(ed)?|reversed|reversal|cr\\b)");
     private static final Pattern LAST4 = Pattern.compile(
         "(?i)(?:a/?c|acct|account|card|ac)\\s*(?:no\\.?|number|num)?\\s*(?:ending(?:\\s+(?:with|in))?)?\\s*[:\\-]?\\s*[x*•.]*\\s*([0-9]{3,6})\\b");
+    // Payment-app receipts ("To Swiggy · ₹250 · Completed · UPI transaction ID …")
+    private static final Pattern RECEIPT = Pattern.compile("(?i)\\b(completed|successful|success)\\b");
+    private static final Pattern RECEIPT_ID = Pattern.compile("(?i)\\b(upi (transaction|ref)( id| no)?|utr|transaction id|txn id|ref(erence)? (no|id))\\b");
+    // A receipt's first line says the direction: "To Swiggy" (paid) vs "Received from …"
+    private static final Pattern RECEIPT_IN = Pattern.compile("(?i)^\\s*(from\\b|received\\b|money received)");
+    private static final Pattern LAST4_MASKED = Pattern.compile("(?i)[x*•]{2,}\\s*([0-9]{4})\\b");
     private static final Pattern VPA = Pattern.compile("(?i)\\b([a-z0-9][a-z0-9._-]{1,40})@[a-z]{2,20}\\b");
     private static final String MERCHANT_END =
         "([A-Za-z][A-Za-z0-9 .&'_*-]{1,40}?)"
@@ -85,18 +91,23 @@ public final class TxnParser {
         Matcher dm = DEBIT.matcher(text);
         Matcher cm = CREDIT.matcher(text);
         boolean debit = dm.find(), credit = cm.find();
-        if (!debit && !credit) return null;
+        boolean receipt = RECEIPT.matcher(text).find() && RECEIPT_ID.matcher(text).find();
+        if (!debit && !credit && !receipt) return null;
 
         Txn t = new Txn();
         t.amount = amount;
         // "debited from A/c … and credited to VPA …": whichever verb comes first describes your account
-        t.type = RECEIVED_FROM_PERSON.matcher(text).find() ? "credit"
-            : debit && (!credit || dm.start() < cm.start()) ? "debit" : "credit";
+        if (RECEIVED_FROM_PERSON.matcher(text).find()) t.type = "credit";
+        else if (debit || credit) t.type = debit && (!credit || dm.start() < cm.start()) ? "debit" : "credit";
+        else t.type = RECEIPT_IN.matcher(text).find() ? "credit" : "debit";
 
         Matcher lm = LAST4.matcher(text);
         if (lm.find()) {
             String d = lm.group(1);
             t.last4 = d.length() > 4 ? d.substring(d.length() - 4) : d;
+        } else {
+            Matcher mm = LAST4_MASKED.matcher(text);   // "XXXX4521" on receipts
+            if (mm.find()) t.last4 = mm.group(1);
         }
 
         t.merchant = merchant(text, t.type);

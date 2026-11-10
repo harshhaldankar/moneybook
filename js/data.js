@@ -533,6 +533,20 @@ const Capture = {
         return { draft: this.toDraft(data, { ...t, id: `paste-${generateId()}`, source: 'paste', ts: this.smsDate(text) || Date.now() }) };
     },
 
+    /**
+     * Text read from a screenshot: a payment receipt parses as a whole; an SMS thread is tried
+     * message by message from the newest (bottom) up, skipping any block with an OTP or code.
+     */
+    fromScreenshot(data, full, blocks = []) {
+        if (!TxnParser.isSensitive(full) && TxnParser.parse(full)) return this.fromText(data, full);
+        let sawSensitive = false;
+        for (let i = blocks.length - 1; i >= 0; i--) {
+            if (TxnParser.isSensitive(blocks[i])) { sawSensitive = true; continue; }
+            if (TxnParser.parse(blocks[i])) return this.fromText(data, blocks[i]);
+        }
+        return { reason: sawSensitive ? 'sensitive' : 'none' };
+    },
+
     learn(data, merchant, category) {
         const key = this.merchantKey(merchant);
         if (!key || !category) return;

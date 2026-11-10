@@ -30,6 +30,12 @@ const TxnParser = (() => {
         + 'transaction of|transferred to|payment of|dr\\b)', 'i');
     const CREDIT = /\b(credited|credit(ed)? (by|with|of)|received|deposited|refund(ed)?|reversed|reversal|cr\b)/i;
     const LAST4 = /(?:a\/?c|acct|account|card|ac)\s*(?:no\.?|number|num)?\s*(?:ending(?:\s+(?:with|in))?)?\s*[:-]?\s*[x*•.]*\s*([0-9]{3,6})\b/i;
+    // Payment-app receipts ("To Swiggy · ₹250 · Completed · UPI transaction ID …")
+    const RECEIPT = /\b(completed|successful|success)\b/i;
+    const RECEIPT_ID = /\b(upi (transaction|ref)( id| no)?|utr|transaction id|txn id|ref(erence)? (no|id))\b/i;
+    // A receipt's first line says the direction: "To Swiggy" (paid) vs "Received from …"
+    const RECEIPT_IN = /^\s*(from\b|received\b|money received)/i;
+    const LAST4_MASKED = /[x*•]{2,}\s*([0-9]{4})\b/i;
     const VPA = /\b([a-z0-9][a-z0-9._-]{1,40})@[a-z]{2,20}\b/i;
     const MERCHANT_END = "([A-Za-z][A-Za-z0-9 .&'_*-]{1,40}?)"
         + '(?=\\s+(?:on|ref(?:no)?|via|using|upi|avl|avbl|bal|txn|thru|for|is|has|date|at|not|from)\\b|[.,;(@\\n]|\\s*$|\\s+\\d)';
@@ -79,14 +85,17 @@ const TxnParser = (() => {
 
         const dm = DEBIT.exec(text);
         const cm = CREDIT.exec(text);
-        if (!dm && !cm) return null;
+        const receipt = RECEIPT.test(text) && RECEIPT_ID.test(text);
+        if (!dm && !cm && !receipt) return null;
 
         // "debited from A/c … and credited to VPA …": whichever verb comes first describes your account
         const type = RECEIVED_FROM_PERSON.test(text) ? 'credit'
-            : dm && (!cm || dm.index < cm.index) ? 'debit' : 'credit';
+            : (dm || cm) ? (dm && (!cm || dm.index < cm.index) ? 'debit' : 'credit')
+            : (RECEIPT_IN.test(text) ? 'credit' : 'debit');
 
         const lm = LAST4.exec(text);
-        const last4 = lm ? (lm[1].length > 4 ? lm[1].slice(-4) : lm[1]) : '';
+        const mm = lm ? null : LAST4_MASKED.exec(text);   // "XXXX4521" on receipts
+        const last4 = lm ? (lm[1].length > 4 ? lm[1].slice(-4) : lm[1]) : (mm ? mm[1] : '');
 
         const lower = text.toLowerCase();
         let mode = 'UPI';

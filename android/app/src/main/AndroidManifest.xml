@@ -22,14 +22,22 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- "Share → MoneyBook" from Messages: only the text the user chooses to share -->
+            <!-- "Share → MoneyBook": only the text or screenshot the user chooses to share -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
 
         </activity>
+
+        <!-- Ask Play services to fetch the text-recognition model at install time -->
+        <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="ocr" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

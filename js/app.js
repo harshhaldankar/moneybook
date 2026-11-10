@@ -327,6 +327,7 @@ class App {
             'test-notification': () => Native.testNotification(),
             'copy-share-link': () => this.copyShareLink(),
             'paste-sms': () => this.pasteSms(),
+            'import-statement': () => this.openStatementSheet(),
             'install-update': () => this.update && Native.openUpdate(this.update.url),
             'dismiss-update': () => {
                 try { localStorage.setItem('mb_update_dismissed', this.update.version); } catch { /* ignore */ }
@@ -568,6 +569,11 @@ class App {
                     <button type="button" class="btn btn-secondary" id="pasteFromClipboard"><i class="fas fa-paste"></i> Paste</button>
                     <button type="button" class="btn btn-primary grow" id="pasteContinue" disabled><i class="fas fa-arrow-right"></i> Continue</button>
                 </div>
+                ${Native.isNative ? `
+                <div class="or-divider"><span>or</span></div>
+                <button type="button" class="btn btn-secondary btn-block" id="scanShot"><i class="fas fa-image"></i> Scan a screenshot</button>
+                <input type="file" id="scanFile" accept="image/*" hidden>
+                <p class="hint">Works with screenshots of bank SMS and GPay / PhonePe / Paytm payment screens. The image is read on your phone and not saved.</p>` : ''}
                 <p class="hint"><i class="fas fa-shield-halved"></i> Only the amount, account digits, merchant and date are used. OTPs are refused and the message itself isn't saved.</p>
             </div>`, body => {
             const area = body.querySelector('#pasteText');
@@ -593,9 +599,140 @@ class App {
                 update();
             });
             cont.addEventListener('click', () => { if (result?.draft) this.openTxnSheet(null, 'Expense', result.draft); });
+            body.querySelector('#scanShot')?.addEventListener('click', () => body.querySelector('#scanFile').click());
+            body.querySelector('#scanFile')?.addEventListener('change', e => this.scanScreenshot(e.target.files[0], body.querySelector('#scanShot')));
             update();
             if (!prefill) setTimeout(() => area.focus(), 250);
         });
+    }
+
+    async scanScreenshot(file, btn) {
+        if (!file) return;
+        await this.withBusy(btn, 'Reading…', async () => {
+            try {
+                const dataUrl = await new Promise((resolve, reject) => {
+                    const r = new FileReader();
+                    r.onload = () => resolve(r.result);
+                    r.onerror = () => reject(new Error('Couldn\'t open that image'));
+                    r.readAsDataURL(file);
+                });
+                const { text, blocks } = await Native.scanImage(dataUrl);
+                const r = Capture.fromScreenshot(this.data, text || '', blocks || []);
+                if (r.draft) { this.openTxnSheet(null, 'Expense', r.draft); return; }
+                this.toast(r.reason === 'sensitive' ? 'That screenshot only shows an OTP or code, so it was not used' : 'No payment found in that screenshot', 'error');
+            } catch (err) {
+                this.toast(err.message || 'Couldn\'t read that screenshot', 'error');
+            }
+        });
+    }
+
+    /* ========== BANK STATEMENT IMPORT ========== */
+    openStatementSheet() {
+        if (!this.activeAccounts().length) { this.toast('Add a bank account first', 'error'); this.openAccountSheet(null, true); return; }
+        const main = Calc.mainAccount(this.data);
+        this.openSheet('Import bank statement', `
+            <div class="sheet-form">
+                <div class="form-group">
+                    <label for="stAccount">Which account is this statement for?</label>
+                    <select id="stAccount">${this.accountOptions(main.id)}</select>
+                </div>
+                <label class="file-drop" for="stFile">
+                    <i class="fas fa-file-excel"></i>
+                    <b>Choose statement file</b>
+                    <small>Excel (.xls, .xlsx) or CSV, downloaded from net banking</small>
+                    <input type="file" id="stFile" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+                </label>
+                <p class="hint"><i class="fas fa-circle-info"></i> In net banking, open the account statement, pick the dates, and download as <b>Excel</b> or <b>CSV</b>. PDF statements aren't supported yet. The file is read on this device; only the transactions you import are saved.</p>
+                <div id="stResult"></div>
+            </div>`, body => {
+            body.querySelector('#stFile').addEventListener('change', e => this.readStatement(e.target.files[0], body));
+            body.querySelector('#stAccount').addEventListener('change', () => { if (this.statementRows) this.renderStatement(body); });
+        });
+    }
+
+    async readStatement(file, body) {
+        if (!file) return;
+        const result = body.querySelector('#stResult');
+        result.innerHTML = `<p class="hint"><i class="fas fa-spinner fa-spin"></i> Reading ${escapeHtml(file.name)}…</p>`;
+        try {
+            const parsed = await Statement.read(file);
+            this.statementRows = parsed.rows;
+            this.statementFile = file.name;
+            this.renderStatement(body);
+        } catch (err) {
+            this.statementRows = null;
+            result.innerHTML = `<p class="auth-error">${escapeHtml(err.message)}</p>`;
+        }
+    }
+
+    renderStatement(body) {
+        const accountId = body.querySelector('#stAccount').value;
+        const drafts = Statement.toDrafts(this.data, accountId, this.statementRows);
+        this.statementDrafts = drafts;
+        const result = body.querySelector('#stResult');
+        const dups = drafts.filter(d => d.duplicate).length;
+        const early = drafts.filter(d => d.beforeOpening && !d.duplicate).length;
+        const dates = drafts.map(d => d.date).sort();
+        const sum = type => drafts.filter(d => d.selected && (type === 'in' ? d.type === 'Income' : d.type !== 'Income')).reduce((s, d) => s + d.amount, 0);
+        const account = this.accountById(accountId);
+
+        result.innerHTML = `
+            <div class="statement-summary">
+                <b>${drafts.length} transactions found</b>
+                <small>${friendlyDate(dates[0])} – ${friendlyDate(dates[dates.length - 1])} · ${escapeHtml(this.statementFile || '')}</small>
+                ${dups ? `<small><i class="fas fa-clone"></i> ${dups} already in MoneyBook (unticked)</small>` : ''}
+                ${early ? `<small class="warn-c"><i class="fas fa-triangle-exclamation"></i> ${early} dated before ${escapeHtml(account.name)}'s opening balance (${formatDate(account.openingDate)}), unticked so your balance stays right</small>` : ''}
+            </div>
+            <div class="statement-tools">
+                <button type="button" class="link-btn" id="stAll">Select all</button>
+                <button type="button" class="link-btn" id="stNone">Select none</button>
+            </div>
+            <div class="statement-list">
+                ${drafts.map(d => `
+                    <label class="statement-row ${d.selected ? '' : 'off'}">
+                        <input type="checkbox" data-key="${d.key}" ${d.selected ? 'checked' : ''}>
+                        <span class="txn-main">
+                            <b>${escapeHtml(d.note)}</b>
+                            <small>${friendlyDate(d.date)} · ${escapeHtml(getCategory(d.category).name)}${d.duplicate ? ' · <span class="warn-c">already added</span>' : d.beforeOpening ? ' · <span class="warn-c">before opening date</span>' : ''}</small>
+                        </span>
+                        <span class="txn-amt ${d.type === 'Income' ? 'income-c' : d.type === 'Transfer' ? 'transfer-c' : 'expense-c'}">${d.type === 'Income' ? '+' : d.type === 'Transfer' ? '' : '-'}${formatCurrency(d.amount)}</span>
+                    </label>`).join('')}
+            </div>
+            <div class="btn-row sticky-actions">
+                <button type="button" class="btn btn-primary grow" id="stImport"></button>
+            </div>`;
+
+        const update = () => {
+            const n = drafts.filter(d => d.selected).length;
+            const btn = result.querySelector('#stImport');
+            btn.disabled = !n;
+            btn.innerHTML = `<i class="fas fa-file-import"></i> Import ${n} transaction${n === 1 ? '' : 's'} · -${formatCompact(sum('out'))} / +${formatCompact(sum('in'))}`;
+        };
+        result.querySelectorAll('[data-key]').forEach(cb => cb.addEventListener('change', () => {
+            const d = drafts.find(x => x.key === cb.dataset.key);
+            d.selected = cb.checked;
+            cb.closest('.statement-row').classList.toggle('off', !cb.checked);
+            update();
+        }));
+        const setAll = on => {
+            drafts.forEach(d => { d.selected = on; });
+            result.querySelectorAll('[data-key]').forEach(cb => { cb.checked = on; cb.closest('.statement-row').classList.toggle('off', !on); });
+            update();
+        };
+        result.querySelector('#stAll').addEventListener('click', () => setAll(true));
+        result.querySelector('#stNone').addEventListener('click', () => setAll(false));
+        result.querySelector('#stImport').addEventListener('click', async () => {
+            const chosen = drafts.filter(d => d.selected);
+            chosen.forEach(d => {
+                const t = { id: generateId(), type: d.type, amount: d.amount, date: d.date, accountId, category: d.category, paymentMode: d.paymentMode, note: d.note, source: 'statement' };
+                if (d.type === 'Transfer') t.toAccountId = d.toAccountId;
+                this.data.transactions.push(t);
+            });
+            this.statementRows = null;
+            this.closeSheet();
+            await this.persist(`${chosen.length} transaction${chosen.length === 1 ? '' : 's'} imported into ${account.name}`);
+        });
+        update();
     }
 
     /* ========== SHARED BANK SMS waiting for review ========== */
@@ -717,7 +854,7 @@ class App {
                     <li>Open MoneyBook and tap <b>Paste SMS</b> on Home</li>
                     <li>Amount, account, merchant, date and category are filled in. Tap <b>Save</b></li>
                 </ol>
-                <p class="hint">If your SMS app has <b>Share</b>, you can also share the message straight to MoneyBook.</p>
+                <p class="hint">You can also <b>share a screenshot</b> of a bank SMS or a GPay / PhonePe payment screen to MoneyBook, or share the SMS itself if your SMS app allows it.</p>
                 <p class="hint"><i class="fas fa-shield-halved"></i> MoneyBook has no permission to read your SMS or notifications. It only sees the message you share, OTPs are refused, and the message text is never saved.</p>
             </div>
             <div class="card flush menu">
@@ -1012,6 +1149,7 @@ class App {
             </div>
             <div class="card flush menu">
                 ${item('automation', 'fas fa-share-nodes', 'Share SMS & Reminders', Native.isNative ? 'Share bank SMS, reminders' : 'Reminders and setup for the Android app')}
+                <button class="menu-item" data-action="import-statement"><span class="menu-icon"><i class="fas fa-file-import"></i></span><span class="menu-text"><b>Import bank statement</b><small>Excel or CSV from net banking</small></span><i class="fas fa-chevron-right"></i></button>
                 ${item('accounts', 'fas fa-building-columns', 'Bank Accounts', `${this.activeAccounts().length} active · add, edit, set main`)}
                 ${item('budgets', 'fas fa-chart-simple', 'Budgets', 'Monthly limits per category')}
                 ${item('recurring', 'fas fa-repeat', 'Auto-Debits', 'SIPs, EMIs, rent, subscriptions')}
@@ -1358,7 +1496,7 @@ class App {
 
         const html = `
             <form id="txnForm" class="sheet-form">
-                ${draft ? `<div class="capture-note"><i class="fas ${draft.source === 'paste' ? 'fa-paste' : 'fa-share-nodes'}"></i> Filled in from the ${draft.source === 'paste' ? 'pasted' : 'shared'} SMS${draft.last4 ? ` · ••${escapeHtml(draft.last4)}` : ''}${draft.accountId ? '' : ' · <b>pick the account</b>'}</div>
+                ${draft ? `<div class="capture-note"><i class="fas ${draft.source === 'paste' ? 'fa-paste' : 'fa-share-nodes'}"></i> Filled in from the ${draft.source === 'paste' ? 'pasted text' : 'shared message'}${draft.last4 ? ` · ••${escapeHtml(draft.last4)}` : ''}${draft.accountId ? '' : ' · <b>pick the account</b>'}</div>
                 ${d.transactions.some(t => t.type === draft.type && Math.abs(t.amount - draft.amount) < 0.01 && t.date === draft.date) ? `<div class="capture-note warn"><i class="fas fa-triangle-exclamation"></i> You already have ${formatCurrency(draft.amount)} on ${friendlyDate(draft.date)}. Check it isn't a duplicate.</div>` : ''}` : ''}
                 <div class="segmented type-tabs">
                     ${['Expense', 'Income', 'Transfer'].map(t => `<button type="button" data-type="${t}" class="${state.type === t ? 'active' : ''}">${t}</button>`).join('')}

@@ -4,11 +4,28 @@ import android.content.Context;
 
 import org.json.JSONObject;
 
+import java.util.List;
+
 /** Handles text the user shares to MoneyBook (e.g. a bank SMS): parse → store for review. */
 public final class CaptureHandler {
     public enum Result { ADDED, ALREADY_ADDED, NOT_A_TRANSACTION, SENSITIVE }
 
     private CaptureHandler() {}
+
+    /**
+     * Screenshot text: a payment receipt parses as a whole; an SMS thread is tried message by
+     * message from the newest (bottom) up. Blocks containing an OTP or code are skipped, never used.
+     */
+    public static Result handleScreenshot(Context ctx, String full, List<String> blocks) {
+        if (!TxnParser.isSensitive(full) && TxnParser.parse(full) != null) return handleShared(ctx, full);
+        boolean sawSensitive = false;
+        for (int i = blocks.size() - 1; i >= 0; i--) {
+            String block = blocks.get(i);
+            if (TxnParser.isSensitive(block)) { sawSensitive = true; continue; }
+            if (TxnParser.parse(block) != null) return handleShared(ctx, block);
+        }
+        return sawSensitive ? Result.SENSITIVE : Result.NOT_A_TRANSACTION;
+    }
 
     public static Result handleShared(Context ctx, String text) {
         // OTPs and codes are refused before anything else happens with the text
