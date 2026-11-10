@@ -13,18 +13,21 @@ public final class CaptureHandler {
     private CaptureHandler() {}
 
     /**
-     * Screenshot text: a payment receipt parses as a whole; an SMS thread is tried message by
-     * message from the newest (bottom) up. Blocks containing an OTP or code are skipped, never used.
+     * Shared screenshot: drop any text block that looks like an OTP or code, then hand the rest
+     * to the app (in memory only), which lists every transaction it finds for review.
      */
-    public static Result handleScreenshot(Context ctx, String full, List<String> blocks) {
-        if (!TxnParser.isSensitive(full) && TxnParser.parse(full) != null) return handleShared(ctx, full);
-        boolean sawSensitive = false;
-        for (int i = blocks.size() - 1; i >= 0; i--) {
-            String block = blocks.get(i);
-            if (TxnParser.isSensitive(block)) { sawSensitive = true; continue; }
-            if (TxnParser.parse(block) != null) return handleShared(ctx, block);
+    public static Result handleSharedScreenshot(String full, List<String> blocks) {
+        List<String> safe = new java.util.ArrayList<>();
+        boolean sawSensitive = false, sawTxn = false;
+        for (String b : blocks) {
+            if (TxnParser.isSensitive(b)) { sawSensitive = true; continue; }
+            safe.add(b);
+            if (TxnParser.parse(b) != null) sawTxn = true;
         }
-        return sawSensitive ? Result.SENSITIVE : Result.NOT_A_TRANSACTION;
+        String safeFull = TxnParser.isSensitive(full) ? "" : full;
+        if (!sawTxn && TxnParser.parse(safeFull) == null) return sawSensitive ? Result.SENSITIVE : Result.NOT_A_TRANSACTION;
+        MoneyCapturePlugin.onScanned(safeFull, safe);
+        return Result.ADDED;
     }
 
     public static Result handleShared(Context ctx, String text) {

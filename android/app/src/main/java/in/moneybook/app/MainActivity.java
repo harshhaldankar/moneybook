@@ -37,7 +37,7 @@ public class MainActivity extends BridgeActivity {
             Toast.makeText(this, "Reading the screenshot…", Toast.LENGTH_SHORT).show();
             ScreenshotReader.fromUri(this, image, new ScreenshotReader.Callback() {
                 @Override public void onText(String ocr, java.util.List<String> blocks) {
-                    runOnUiThread(() -> showResult(CaptureHandler.handleScreenshot(MainActivity.this, ocr, blocks)));
+                    runOnUiThread(() -> showResult(CaptureHandler.handleSharedScreenshot(ocr, blocks)));
                 }
                 @Override public void onError(String message) { runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show()); }
             });

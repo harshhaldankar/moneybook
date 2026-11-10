@@ -35,7 +35,10 @@ const TxnParser = (() => {
     const RECEIPT_ID = /\b(upi (transaction|ref)( id| no)?|utr|transaction id|txn id|ref(erence)? (no|id))\b/i;
     // A receipt's first line says the direction: "To Swiggy" (paid) vs "Received from …"
     const RECEIPT_IN = /^\s*(from\b|received\b|money received)/i;
-    const LAST4_MASKED = /[x*•]{2,}\s*([0-9]{4})\b/i;
+    const LAST4_MASKED = /[x*•]{2,}\s*([0-9]{4})\b(?!@)/i;
+    // "Central Bank of India 1386" on payment-app receipts
+    const LAST4_BANK = /\bbank(?: of [a-z]+)*\s+([0-9]{4})\b/i;
+    const REF = /(?:ref(?:erence)?\.?\s*(?:no\.?|number|id)?|utr(?:\s*no\.?)?|upi (?:transaction|ref)\.?\s*(?:id|no\.?)?|transaction id|txn id|refno)\s*[:.-]?\s*([0-9]{9,18})\b/i;
     const VPA = /\b([a-z0-9][a-z0-9._-]{1,40})@[a-z]{2,20}\b/i;
     const MERCHANT_END = "([A-Za-z][A-Za-z0-9 .&'_*-]{1,40}?)"
         + '(?=\\s+(?:on|ref(?:no)?|via|using|upi|avl|avbl|bal|txn|thru|for|is|has|date|at|not|from)\\b|[.,;(@\\n]|\\s*$|\\s+\\d)';
@@ -73,7 +76,7 @@ const TxnParser = (() => {
         return !!text && SENSITIVE.test(text);
     }
 
-    /** Returns { amount, type: 'debit'|'credit', last4, merchant, mode } or null. */
+    /** Returns { amount, type: 'debit'|'credit', last4, merchant, mode, ref } or null. ref = UPI ref / UTR. */
     function parse(text) {
         if (!text || text.length < 10 || text.length > 1000) return null;
         if (isSensitive(text) || NOT_A_TXN.test(text)) return null;
@@ -94,8 +97,10 @@ const TxnParser = (() => {
             : (RECEIPT_IN.test(text) ? 'credit' : 'debit');
 
         const lm = LAST4.exec(text);
-        const mm = lm ? null : LAST4_MASKED.exec(text);   // "XXXX4521" on receipts
-        const last4 = lm ? (lm[1].length > 4 ? lm[1].slice(-4) : lm[1]) : (mm ? mm[1] : '');
+        const bm = lm ? null : LAST4_BANK.exec(text);           // "Central Bank of India 1386" on receipts
+        const mm = lm || bm ? null : LAST4_MASKED.exec(text);   // "XXXX4521"
+        const last4 = lm ? (lm[1].length > 4 ? lm[1].slice(-4) : lm[1]) : (bm ? bm[1] : mm ? mm[1] : '');
+        const rf = REF.exec(text);
 
         const lower = text.toLowerCase();
         let mode = 'UPI';
@@ -104,7 +109,7 @@ const TxnParser = (() => {
         else if (lower.includes('card')) mode = 'Card';
         else if (/\b(neft|imps|rtgs|net ?banking)\b/.test(lower)) mode = 'Net Banking';
 
-        return { amount, type, last4, merchant: merchant(text, type), mode };
+        return { amount, type, last4, merchant: merchant(text, type), mode, ref: rf ? rf[1] : '' };
     }
 
     return { parse, isSensitive };

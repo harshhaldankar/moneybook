@@ -96,6 +96,30 @@ public class TxnParserTest {
             "credit", 1200, "0123", "Rahul Verma", null);
     }
 
+    /* ---------- Central Bank of India + Google Pay (real formats) ---------- */
+    @Test public void cboiCreditWithCompactDate() {
+        TxnParser.Txn t = ok("A/c XX1386 credited by Rs. 1000.00 on 08112026 via UPI from VAISHALI MAHENDRA HALDAN via Ref No. 667832906937. -CBoI",
+            "credit", 1000, "1386", "VAISHALI MAHENDRA HALDAN", "UPI");
+        assertEquals("667832906937", t.ref);
+    }
+
+    @Test public void cboiDebitWithBalance() {
+        TxnParser.Txn t = ok("A/c XX1386 debited by Rs. 120.00 via UPI with Ref No. 668019419482 Total Bal Rs. 837.18 Clr Bal Rs. 837.18. -CBoI",
+            "debit", 120, "1386", "", "UPI");
+        assertEquals("668019419482", t.ref);
+    }
+
+    @Test public void gpayReceiptPicksBankDigitsNotPayeeVpa() {
+        TxnParser.Txn t = ok("G\nTo Gauresh Mahendra Haldankar\n₹120\nPay again\nCompleted\n10 Nov 2026, 9:35pm\nCentral Bank of India 1386\nPayment started\nPayment completed\n"
+            + "UPI transaction ID\n668019419482\nTo: Gauresh Mahendra Haldankar\n••••••9272@fam on FamApp by Trio\nFrom: Mr HARSH MAHENDRA HALDANKAR\n(Central Bank of India)\n••••ar95@okicici on Google Pay\nGoogle transaction ID\nCICAgPjtqtHMbA",
+            "debit", 120, "1386", "Gauresh Mahendra Haldankar", "UPI");
+        assertEquals("668019419482", t.ref);
+    }
+
+    @Test public void balanceOnlyFragmentIsNotATransaction() {
+        assertNull(TxnParser.parse("via UPI with Ref No. 631147348109 Total Bal Rs. 747.18 Clr Bal Rs. 747.18. -CBoI"));
+    }
+
     /* ---------- must be rejected ---------- */
     @Test public void rejectsOtp() {
         assertNull(TxnParser.parse("123456 is your OTP for txn of Rs.2,500 at AMAZON on HDFC Bank Card XX9012. Valid for 10 mins. Do not share OTP"));

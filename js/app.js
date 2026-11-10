@@ -83,6 +83,7 @@ class App {
             });
         });
         document.getElementById('changeServer').addEventListener('click', () => this.showConnect(true));
+        document.getElementById('bioUnlock').addEventListener('click', () => this.bioUnlock());
         document.getElementById('connectCancel').addEventListener('click', () => this.showAuth());
 
         document.getElementById('loginForm').addEventListener('submit', async e => {
@@ -97,6 +98,7 @@ class App {
                     if (!await Store.unlock(user, pass)) await Store.login(user, pass);
                     this.enterApp();
                     Store.flush();
+                    this.offerBiometric();
                 } catch (err) {
                     this.showAuthError('loginError', err.message);
                 }
@@ -178,6 +180,40 @@ class App {
             this.switchAuthTab('login');
             document.getElementById('loginUser').value = prefillUser;
             document.getElementById('loginPass').focus();
+        }
+        // Fingerprint / face unlock for the person who last used this phone
+        const bioUser = prefillUser || (ids.length === 1 ? ids[0] : '');
+        const bioBtn = document.getElementById('bioUnlock');
+        bioBtn.hidden = !(bioUser && Native.bioEnabled(bioUser));
+        if (!bioBtn.hidden) {
+            this.bioUser = bioUser;
+            this.switchAuthTab('login');
+            document.getElementById('loginUser').value = bioUser;
+            Native.biometry().then(b => { bioBtn.querySelector('span').textContent = `Unlock with ${b.label || 'fingerprint'}`; });
+            setTimeout(() => this.bioUnlock(), 350);
+        }
+    }
+
+    async bioUnlock() {
+        const id = this.bioUser;
+        if (!id || !Native.bioEnabled(id)) return;
+        if (await Native.biometricCheck(`Unlock @${id}`) && Store.unlockTrusted(id)) {
+            this.enterApp();
+            Store.flush();
+        }
+    }
+
+    /** After a password login on the phone, offer fingerprint unlock once. */
+    async offerBiometric() {
+        const id = Store.userId;
+        if (!Native.isNative || Native.bioEnabled(id) || localStorage.getItem(`mb_bio_asked_${id}`)) return;
+        const bio = await Native.biometry();
+        if (!bio.available) return;
+        localStorage.setItem(`mb_bio_asked_${id}`, '1');
+        if (await this.confirm(`Unlock with ${bio.label}?`, `Next time, open MoneyBook with your ${bio.label} instead of typing your password. You can change this in Profile.`, 'Turn on')
+            && await Native.biometricCheck(`Turn on ${bio.label} unlock`)) {
+            Native.setBio(id, true);
+            this.toast(`${bio.label[0].toUpperCase()}${bio.label.slice(1)} unlock is on`, 'success');
         }
     }
 
@@ -539,28 +575,34 @@ class App {
                     <h3>Recent</h3>
                     <button class="link-btn" data-action="go" data-view="activity">See all</button>
                 </div>
-                ${this.txnListHtml([...d.transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 6), false)}
+                ${this.txnListHtml([...d.transactions].sort((a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || '') || b.id.localeCompare(a.id)).slice(0, 6), false)}
             </div>`;
     }
 
     /* ========== PASTE A BANK SMS ========== */
-    /** Reads the clipboard; a bank SMS opens straight into review, anything else shows the paste box. */
+    /** Reads the clipboard: bank SMS go straight to review, anything else shows the paste box. */
     async pasteSms() {
         if (!this.activeAccounts().length) { this.toast('Add a bank account first', 'error'); this.openAccountSheet(null, true); return; }
         const text = (await Native.readClipboard()).trim();
         if (text) {
-            const r = Capture.fromText(this.data, text);
-            if (r.draft) { this.openTxnSheet(null, 'Expense', r.draft); return; }
-            if (r.reason === 'sensitive') { this.toast('Copied text looks like an OTP or code, so it was not used', 'error'); this.openPasteSheet(); return; }
+            const r = Capture.draftsFromText(this.data, text);
+            if (r.drafts.length) { this.reviewDrafts(r.drafts, 'Pasted SMS'); return; }
+            if (r.sensitive) { this.toast('Copied text looks like an OTP or code, so it was not used', 'error'); this.openPasteSheet(); return; }
         }
-        this.openPasteSheet(text && text.length < 1000 && !TxnParser.isSensitive(text) ? text : '');
+        this.openPasteSheet(text && text.length < 4000 && !TxnParser.isSensitive(text) ? text : '');
+    }
+
+    /** One draft → the normal review sheet; several (or a duplicate) → the checklist. */
+    reviewDrafts(drafts, title) {
+        if (drafts.length === 1 && !drafts[0].duplicate) this.openTxnSheet(null, 'Expense', drafts[0]);
+        else this.openBatchSheet(drafts, title);
     }
 
     openPasteSheet(prefill = '') {
         this.openSheet('Paste bank SMS', `
             <div class="sheet-form">
                 <ol class="steps">
-                    <li>In your SMS app, long-press the bank message → <b>Copy</b></li>
+                    <li>In your SMS app, long-press the bank message (or select several) → <b>Copy</b></li>
                     <li>Come back here and paste it below</li>
                 </ol>
                 <textarea id="pasteText" rows="5" placeholder="e.g. Sent Rs.249.00 From HDFC Bank A/C *4521 To SWIGGY On 08/11/26">${escapeHtml(prefill)}</textarea>
@@ -573,8 +615,8 @@ class App {
                 <div class="or-divider"><span>or</span></div>
                 <button type="button" class="btn btn-secondary btn-block" id="scanShot"><i class="fas fa-image"></i> Scan a screenshot</button>
                 <input type="file" id="scanFile" accept="image/*" hidden>
-                <p class="hint">Works with screenshots of bank SMS and GPay / PhonePe / Paytm payment screens. The image is read on your phone and not saved.</p>` : ''}
-                <p class="hint"><i class="fas fa-shield-halved"></i> Only the amount, account digits, merchant and date are used. OTPs are refused and the message itself isn't saved.</p>
+                <p class="hint">Screenshot your SMS app (several messages are fine) or a GPay / PhonePe / Paytm payment screen. The image is read on your phone and not saved.</p>` : ''}
+                <p class="hint"><i class="fas fa-shield-halved"></i> Only the amount, account digits, merchant, date and UPI ref are used. OTPs are refused and the message itself isn't saved.</p>
             </div>`, body => {
             const area = body.querySelector('#pasteText');
             const preview = body.querySelector('#pastePreview');
@@ -582,23 +624,25 @@ class App {
             let result = null;
             const update = () => {
                 const text = area.value.trim();
-                result = text ? Capture.fromText(this.data, text) : null;
-                cont.disabled = !result?.draft;
+                result = text ? Capture.draftsFromText(this.data, text) : null;
+                const n = result?.drafts.length || 0;
+                cont.disabled = !n;
                 if (!text) { preview.innerHTML = ''; return; }
-                if (result.reason === 'sensitive') { preview.innerHTML = '<span class="expense-c"><i class="fas fa-ban"></i> Looks like an OTP or code, so it can\'t be used</span>'; return; }
-                if (!result.draft) { preview.innerHTML = '<span class="muted"><i class="fas fa-circle-question"></i> No debit or credit found yet</span>'; return; }
-                const d = result.draft;
+                if (!n && result.sensitive) { preview.innerHTML = '<span class="expense-c"><i class="fas fa-ban"></i> Looks like an OTP or code, so it can\'t be used</span>'; return; }
+                if (!n) { preview.innerHTML = '<span class="muted"><i class="fas fa-circle-question"></i> No debit or credit found yet</span>'; return; }
+                if (n > 1) { preview.innerHTML = `<span class="income-c"><i class="fas fa-check"></i> ${n} transactions found</span>`; return; }
+                const d = result.drafts[0];
                 preview.innerHTML = `<span class="${d.type === 'Income' ? 'income-c' : 'expense-c'}"><i class="fas fa-check"></i> ${d.type === 'Income' ? 'Received' : 'Spent'} ${formatCurrency(d.amount)}</span>${d.note ? ` · ${escapeHtml(d.note)}` : ''} · ${friendlyDate(d.date)}`;
             };
             area.addEventListener('input', update);
             body.querySelector('#pasteFromClipboard').addEventListener('click', async () => {
                 const text = await Native.readClipboard();
                 if (!text) { this.toast('Clipboard is empty. Copy the SMS first.', 'error'); return; }
-                area.value = TxnParser.isSensitive(text) ? '' : text;
+                area.value = TxnParser.isSensitive(text) && !Capture.draftsFromText(this.data, text).drafts.length ? '' : text;
                 if (!area.value) this.toast('Copied text looks like an OTP or code, so it was not used', 'error');
                 update();
             });
-            cont.addEventListener('click', () => { if (result?.draft) this.openTxnSheet(null, 'Expense', result.draft); });
+            cont.addEventListener('click', () => { if (result?.drafts.length) this.reviewDrafts(result.drafts, 'Pasted SMS'); });
             body.querySelector('#scanShot')?.addEventListener('click', () => body.querySelector('#scanFile').click());
             body.querySelector('#scanFile')?.addEventListener('change', e => this.scanScreenshot(e.target.files[0], body.querySelector('#scanShot')));
             update();
@@ -617,12 +661,81 @@ class App {
                     r.readAsDataURL(file);
                 });
                 const { text, blocks } = await Native.scanImage(dataUrl);
-                const r = Capture.fromScreenshot(this.data, text || '', blocks || []);
-                if (r.draft) { this.openTxnSheet(null, 'Expense', r.draft); return; }
-                this.toast(r.reason === 'sensitive' ? 'That screenshot only shows an OTP or code, so it was not used' : 'No payment found in that screenshot', 'error');
+                this.showScanResult(text || '', blocks || []);
             } catch (err) {
                 this.toast(err.message || 'Couldn\'t read that screenshot', 'error');
             }
+        });
+    }
+
+    showScanResult(text, blocks) {
+        const r = Capture.draftsFromScreenshot(this.data, text, blocks);
+        if (r.drafts.length) { this.reviewDrafts(r.drafts, 'From screenshot'); return; }
+        this.toast(r.sensitive ? 'That screenshot only shows an OTP or code, so it was not used' : 'No payment found in that screenshot', 'error');
+    }
+
+    /** A screenshot shared to MoneyBook from the gallery / screenshot tool. */
+    async checkSharedScan() {
+        if (!Store.data) return;
+        const scan = await Native.takeScan();
+        if (scan && (scan.text || scan.blocks?.length)) this.showScanResult(scan.text || '', scan.blocks || []);
+    }
+
+    /** Checklist for several detected transactions (screenshot / multi-SMS paste). */
+    openBatchSheet(drafts, title) {
+        drafts.forEach((d, i) => { d.key = `d${i}`; d.selected = !d.duplicate; });
+        const fallback = Calc.mainAccount(this.data);
+        const needAccount = drafts.some(d => !d.accountId);
+        const timeLabel = t => t ? new Date(`2000-01-01T${t}`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }) : '';
+        this.openSheet(title, `
+            <div class="sheet-form">
+                <div class="statement-summary">
+                    <b>${drafts.length} transaction${drafts.length === 1 ? '' : 's'} found</b>
+                    ${drafts.some(d => d.duplicate) ? `<small><i class="fas fa-clone"></i> ${drafts.filter(d => d.duplicate).length} already in MoneyBook (unticked)</small>` : ''}
+                </div>
+                ${needAccount ? `<div class="form-group"><label for="batchAccount">Account for entries without a matching account</label><select id="batchAccount">${this.accountOptions(fallback.id)}</select></div>` : ''}
+                <div class="statement-list">
+                    ${drafts.map(d => `
+                        <label class="statement-row ${d.selected ? '' : 'off'}">
+                            <input type="checkbox" data-key="${d.key}" ${d.selected ? 'checked' : ''}>
+                            <span class="txn-main">
+                                <b>${escapeHtml(d.note || (d.type === 'Income' ? 'Money received' : 'UPI payment'))}</b>
+                                <small>${friendlyDate(d.date)}${d.time ? ` · ${timeLabel(d.time)}` : ''} · ${escapeHtml(getCategory(d.category || (d.type === 'Income' ? 'other_income' : 'misc')).name)}${d.accountId ? ` · ${escapeHtml(this.accountName(d.accountId))}` : ''}${d.refNo ? ` · Ref …${escapeHtml(d.refNo.slice(-4))}` : ''}
+                                ${d.duplicate ? `<br><span class="warn-c">${d.duplicate.kind === 'ref' ? 'Already added (same UPI ref)' : 'Possibly already added'}</span>` : ''}</small>
+                            </span>
+                            <span class="txn-amt ${d.type === 'Income' ? 'income-c' : 'expense-c'}">${d.type === 'Income' ? '+' : '-'}${formatCurrency(d.amount)}</span>
+                        </label>`).join('')}
+                </div>
+                <p class="hint">Categories are guessed from the merchant. You can change any entry later in Activity.</p>
+                <div class="btn-row sticky-actions">
+                    <button type="button" class="btn btn-primary grow" id="batchAdd"></button>
+                </div>
+            </div>`, body => {
+            const btn = body.querySelector('#batchAdd');
+            const update = () => {
+                const n = drafts.filter(d => d.selected).length;
+                btn.disabled = !n;
+                btn.innerHTML = `<i class="fas fa-check"></i> Add ${n} transaction${n === 1 ? '' : 's'}`;
+            };
+            body.querySelectorAll('[data-key]').forEach(cb => cb.addEventListener('change', () => {
+                drafts.find(d => d.key === cb.dataset.key).selected = cb.checked;
+                cb.closest('.statement-row').classList.toggle('off', !cb.checked);
+                update();
+            }));
+            btn.addEventListener('click', async () => {
+                const accountFallback = body.querySelector('#batchAccount')?.value || fallback.id;
+                const chosen = drafts.filter(d => d.selected);
+                chosen.forEach(d => {
+                    this.data.transactions.push(this.draftToTxn({
+                        ...d,
+                        accountId: d.accountId || accountFallback,
+                        category: d.category || (d.type === 'Income' ? 'other_income' : 'misc'),
+                    }));
+                });
+                this.closeSheet();
+                await this.persist(`${chosen.length} transaction${chosen.length === 1 ? '' : 's'} added`);
+            });
+            update();
         });
     }
 
@@ -724,7 +837,7 @@ class App {
         result.querySelector('#stImport').addEventListener('click', async () => {
             const chosen = drafts.filter(d => d.selected);
             chosen.forEach(d => {
-                const t = { id: generateId(), type: d.type, amount: d.amount, date: d.date, accountId, category: d.category, paymentMode: d.paymentMode, note: d.note, source: 'statement' };
+                const t = { id: generateId(), type: d.type, amount: d.amount, date: d.date, accountId, category: d.category, paymentMode: d.paymentMode, note: d.note, source: 'statement', refNo: d.refNo || '' };
                 if (d.type === 'Transfer') t.toAccountId = d.toAccountId;
                 this.data.transactions.push(t);
             });
@@ -754,6 +867,7 @@ class App {
                 return;
             }
         }
+        await this.checkSharedScan();
         const sharedId = await Native.takeShared();
         const shared = sharedId && this.pendingCaptures.find(c => c.captureId === sharedId);
         if (this.view === 'home') this.render();
@@ -762,8 +876,8 @@ class App {
 
     draftToTxn(c) {
         return {
-            id: generateId(), type: c.type, amount: c.amount, date: c.date, accountId: c.accountId,
-            category: c.category, paymentMode: c.paymentMode, note: c.note, source: c.source,
+            id: generateId(), type: c.type, amount: c.amount, date: c.date, time: c.time || '', accountId: c.accountId,
+            category: c.category, paymentMode: c.paymentMode, note: c.note, source: c.source, refNo: c.refNo || '',
         };
     }
 
@@ -938,7 +1052,7 @@ class App {
             const isTransfer = t.type === 'Transfer';
             const sub = isTransfer
                 ? `${escapeHtml(this.accountName(t.accountId))} → ${escapeHtml(this.accountName(t.toAccountId))}`
-                : `${escapeHtml(this.accountName(t.accountId))}${t.paymentMode ? ' · ' + escapeHtml(t.paymentMode) : ''}${groupByDate ? '' : ' · ' + friendlyDate(t.date)}`;
+                : `${escapeHtml(this.accountName(t.accountId))}${t.paymentMode ? ' · ' + escapeHtml(t.paymentMode) : ''}${groupByDate ? '' : ' · ' + friendlyDate(t.date)}${t.time ? ' · ' + new Date(`2000-01-01T${t.time}`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }) : ''}`;
             const amtClass = isTransfer ? 'transfer-c' : t.type === 'Income' ? 'income-c' : 'expense-c';
             const sign = isTransfer ? '' : t.type === 'Income' ? '+' : '-';
             return `${header}
@@ -963,7 +1077,7 @@ class App {
             .filter(t => f.account === 'all' || t.accountId === f.account || t.toAccountId === f.account)
             .filter(t => f.type === 'all' || t.type === f.type)
             .filter(t => !search || `${t.note} ${getCategory(t.category).name} ${t.paymentMode} ${t.amount}`.toLowerCase().includes(search))
-            .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+            .sort((a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || '') || b.id.localeCompare(a.id));
 
         const inSum = txns.filter(t => t.type === 'Income').reduce((s, t) => s + Number(t.amount), 0);
         const outSum = txns.filter(t => t.type === 'Expense').reduce((s, t) => s + Number(t.amount), 0);
@@ -1393,7 +1507,8 @@ class App {
             <div class="card flush menu">
                 <button class="menu-item" data-action="edit-name"><span class="menu-icon"><i class="fas fa-id-card"></i></span><span class="menu-text"><b>Change display name</b></span><i class="fas fa-chevron-right"></i></button>
                 <button class="menu-item" data-action="change-password"><span class="menu-icon"><i class="fas fa-key"></i></span><span class="menu-text"><b>Change password</b><small>Logs you out on other devices</small></span><i class="fas fa-chevron-right"></i></button>
-                <label class="menu-item toggle-row"><span class="menu-icon"><i class="fas fa-lock"></i></span><span class="menu-text"><b>Ask for password when opening</b><small>Also locks after 10 minutes idle</small></span><input type="checkbox" class="switch" data-setting="lockOnOpen" ${d.settings.lockOnOpen !== false ? 'checked' : ''}></label>
+                <label class="menu-item toggle-row"><span class="menu-icon"><i class="fas fa-lock"></i></span><span class="menu-text"><b>Lock when opening</b><small>Also locks after 10 minutes idle</small></span><input type="checkbox" class="switch" data-setting="lockOnOpen" ${d.settings.lockOnOpen !== false ? 'checked' : ''}></label>
+                <label class="menu-item toggle-row" id="bioRow" hidden><span class="menu-icon"><i class="fas fa-fingerprint"></i></span><span class="menu-text"><b id="bioTitle">Unlock with fingerprint</b><small>On this phone only. Your password still works.</small></span><input type="checkbox" class="switch" id="bioToggle" ${Native.bioEnabled(Store.userId) ? 'checked' : ''}></label>
             </div>
             <div class="card flush menu">
                 <button class="menu-item" data-action="export"><span class="menu-icon"><i class="fas fa-download"></i></span><span class="menu-text"><b>Download backup (JSON)</b><small>Restore it on any device</small></span></button>
@@ -1411,6 +1526,18 @@ class App {
             <p class="hint center"><i class="fas fa-shield-halved"></i> Your data is backed up online and cached on this device for offline use.</p>`;
         document.getElementById('importFile').addEventListener('change', e => this.importData(e.target.files[0]));
         this.bindSettingToggles('view-profile');
+        Native.biometry().then(bio => {
+            const row = document.getElementById('bioRow');
+            if (!row || !bio.available) return;
+            row.hidden = false;
+            document.getElementById('bioTitle').textContent = `Unlock with ${bio.label}`;
+            document.getElementById('bioToggle').addEventListener('change', async e => {
+                const on = e.target.checked;
+                if (on && !await Native.biometricCheck(`Turn on ${bio.label} unlock`)) { e.target.checked = false; return; }
+                Native.setBio(Store.userId, on);
+                this.toast(on ? `${bio.label[0].toUpperCase()}${bio.label.slice(1)} unlock is on` : `${bio.label[0].toUpperCase()}${bio.label.slice(1)} unlock is off`, 'success');
+            });
+        });
     }
 
     exportData() {
@@ -1497,7 +1624,7 @@ class App {
         const html = `
             <form id="txnForm" class="sheet-form">
                 ${draft ? `<div class="capture-note"><i class="fas ${draft.source === 'paste' ? 'fa-paste' : 'fa-share-nodes'}"></i> Filled in from the ${draft.source === 'paste' ? 'pasted text' : 'shared message'}${draft.last4 ? ` · ••${escapeHtml(draft.last4)}` : ''}${draft.accountId ? '' : ' · <b>pick the account</b>'}</div>
-                ${d.transactions.some(t => t.type === draft.type && Math.abs(t.amount - draft.amount) < 0.01 && t.date === draft.date) ? `<div class="capture-note warn"><i class="fas fa-triangle-exclamation"></i> You already have ${formatCurrency(draft.amount)} on ${friendlyDate(draft.date)}. Check it isn't a duplicate.</div>` : ''}` : ''}
+                ${Capture.duplicateOf(d, draft) ? `<div class="capture-note warn"><i class="fas fa-triangle-exclamation"></i> ${Capture.duplicateOf(d, draft).kind === 'ref' ? `Already added: same UPI ref (…${escapeHtml(draft.refNo.slice(-4))}).` : `You already have ${formatCurrency(draft.amount)} on ${friendlyDate(draft.date)}. Check it isn't a duplicate.`}</div>` : ''}` : ''}
                 <div class="segmented type-tabs">
                     ${['Expense', 'Income', 'Transfer'].map(t => `<button type="button" data-type="${t}" class="${state.type === t ? 'active' : ''}">${t}</button>`).join('')}
                 </div>
@@ -1597,6 +1724,8 @@ class App {
                     paymentMode: state.paymentMode,
                     note: body.querySelector('#fNote').value.trim(),
                     source: txn?.source || draft?.source || 'manual',
+                    refNo: txn?.refNo || draft?.refNo || '',
+                    time: txn?.time || draft?.time || (body.querySelector('#fDate').value === todayStr() && !isEdit ? new Date().toTimeString().slice(0, 5) : ''),
                 };
                 if (state.type === 'Transfer') record.toAccountId = toAccountId;
                 if (draft) {

@@ -12,12 +12,16 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /** Bridge for the web app: list and remove shared transactions waiting for review. */
 @CapacitorPlugin(name = "MoneyCapture")
 public class MoneyCapturePlugin extends Plugin {
     private static MoneyCapturePlugin instance;
+    // Text of a shared screenshot, kept in memory only until the app reads it
+    private static String pendingScanText = null;
+    private static List<String> pendingScanBlocks = null;
 
     @Override
     public void load() {
@@ -54,6 +58,26 @@ public class MoneyCapturePlugin extends Plugin {
         for (int i = 0; i < ids.length(); i++) set.add(ids.optString(i));
         CaptureStore.remove(getContext(), set);
         call.resolve();
+    }
+
+    /** Called after a shared screenshot is read; the app shows every transaction in it for review. */
+    static void onScanned(String text, List<String> blocks) {
+        pendingScanText = text;
+        pendingScanBlocks = blocks;
+        MoneyCapturePlugin p = instance;
+        if (p != null) p.notifyListeners("scanned", new JSObject());
+    }
+
+    @PluginMethod
+    public void takeScan(PluginCall call) {
+        JSObject ret = new JSObject();
+        if (pendingScanText != null) {
+            ret.put("text", pendingScanText);
+            ret.put("blocks", new JSArray(pendingScanBlocks));
+        }
+        pendingScanText = null;
+        pendingScanBlocks = null;
+        call.resolve(ret);
     }
 
     /** Reads text from an image the user picked in the app (base64 or data URL). */

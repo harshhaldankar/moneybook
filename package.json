@@ -9,6 +9,7 @@
     "test": "node scripts/test-parser.js"
   },
   "dependencies": {
+    "@aparajita/capacitor-biometric-auth": "9.1.2",
     "@capacitor/android": "7.6.10",
     "@capacitor/app": "7.1.2",
     "@capacitor/app-launcher": "7.0.4",

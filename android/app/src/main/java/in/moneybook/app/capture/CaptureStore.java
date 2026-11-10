@@ -47,9 +47,10 @@ public final class CaptureStore {
         try {
             for (int i = 0; i < items.length(); i++) {
                 JSONObject o = items.getJSONObject(i);
-                boolean same = Math.abs(o.getDouble("amount") - t.amount) < 0.01
+                boolean sameRef = !t.ref.isEmpty() && t.ref.equals(o.optString("ref"));
+                boolean same = sameRef || (Math.abs(o.getDouble("amount") - t.amount) < 0.01
                     && o.getString("type").equals(t.type)
-                    && Math.abs(o.getLong("ts") - ts) < DUPLICATE_WINDOW_MS;
+                    && Math.abs(o.getLong("ts") - ts) < DUPLICATE_WINDOW_MS);
                 if (same) {
                     // Fill in whatever the first report was missing
                     if (o.optString("last4").isEmpty() && !t.last4.isEmpty()) o.put("last4", t.last4);
@@ -65,6 +66,7 @@ public final class CaptureStore {
             o.put("last4", t.last4);
             o.put("merchant", t.merchant);
             o.put("mode", t.mode);
+            o.put("ref", t.ref);
             o.put("source", source);
             o.put("ts", ts);
             items.put(o);

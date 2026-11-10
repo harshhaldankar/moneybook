@@ -175,7 +175,7 @@ const Api = {
    ======================================== */
 const TABLE_FIELDS = {
     Accounts: ['id', 'name', 'bank', 'type', 'last4', 'openingBalance', 'openingDate', 'isMain', 'color', 'archived'],
-    Transactions: ['id', 'date', 'type', 'amount', 'accountId', 'toAccountId', 'category', 'paymentMode', 'note', 'source'],
+    Transactions: ['id', 'date', 'type', 'amount', 'accountId', 'toAccountId', 'category', 'paymentMode', 'note', 'source', 'refNo', 'time'],
     Recurring: ['id', 'name', 'amount', 'category', 'accountId', 'frequency', 'debitDay', 'startMonth', 'lastPaidMonth', 'isActive', 'autoPost'],
     Budgets: ['id', 'month', 'category', 'amount'],
     Settings: ['id', 'key', 'value'],
@@ -265,6 +265,15 @@ const Store = {
         const s = this.getSessions()[id];
         if (!s) return false;
         if (await this.verifier(password, s.salt) !== s.verifier) throw new Error('Incorrect User ID or password');
+        this.openLocal(id);
+        sessionStorage.setItem(this.UNLOCKED_KEY, id);
+        return true;
+    },
+
+    /** Unlock after the phone's fingerprint / face check (only for users already logged in on this device). */
+    unlockTrusted(userId) {
+        const id = String(userId).trim().toLowerCase();
+        if (!this.getSessions()[id]) return false;
         this.openLocal(id);
         sessionStorage.setItem(this.UNLOCKED_KEY, id);
         return true;
@@ -489,62 +498,154 @@ const Capture = {
         return { category: hint ? hint[1] : null, learned: false };
     },
 
-    /** Build a transaction draft from a native capture { id, amount, type, last4, merchant, mode, source, ts } */
+    /** Build a transaction draft from a capture { id, amount, type, last4, merchant, mode, ref, source, date?, time?, ts? } */
     toDraft(data, cap) {
         const acc = this.matchAccount(data, cap.last4);
         const guess = this.guessCategory(data, cap.merchant, cap.type);
         const d = new Date(Number(cap.ts) || Date.now());
-        return {
+        const draft = {
             captureId: cap.id,
             type: cap.type === 'credit' ? 'Income' : 'Expense',
             amount: Number(cap.amount),
-            date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+            date: cap.date || `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+            time: cap.time || '',
             accountId: acc?.id || null,
             category: guess.category,
             learned: guess.learned,
             paymentMode: cap.mode || 'UPI',
             note: cap.merchant || '',
             last4: cap.last4 || '',
+            refNo: cap.ref || '',
             source: cap.source || 'share',
         };
-    },
-
-    /** Date written in the SMS (08-11-26, 08/11/2026, 08Nov26, 08-Nov-26…) as a timestamp, or null. */
-    smsDate(text) {
-        const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
-        let m = /\b(\d{1,2})[-/ ]?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-/ ,]*(\d{2,4})\b/i.exec(text);
-        let d, mo, y;
-        if (m) { d = +m[1]; mo = months[m[2].toLowerCase()]; y = +m[3]; }
-        else if ((m = /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/.exec(text))) { d = +m[1]; mo = +m[2]; y = +m[3]; }
-        else return null;
-        if (y < 100) y += 2000;
-        const date = new Date(y, mo - 1, d, 12);
-        const ageDays = (Date.now() - date.getTime()) / 864e5;
-        // Ignore impossible dates, future dates and anything older than ~3 months
-        if (isNaN(date) || date.getDate() !== d || ageDays < -1 || ageDays > 92) return null;
-        return date.getTime();
-    },
-
-    /** Parse pasted SMS text. Returns { draft } or { reason: 'sensitive' | 'none' }. */
-    fromText(data, text) {
-        if (TxnParser.isSensitive(text)) return { reason: 'sensitive' };
-        const t = TxnParser.parse(text);
-        if (!t) return { reason: 'none' };
-        return { draft: this.toDraft(data, { ...t, id: `paste-${generateId()}`, source: 'paste', ts: this.smsDate(text) || Date.now() }) };
+        draft.duplicate = this.duplicateOf(data, draft);
+        return draft;
     },
 
     /**
-     * Text read from a screenshot: a payment receipt parses as a whole; an SMS thread is tried
-     * message by message from the newest (bottom) up, skipping any block with an OTP or code.
+     * Is this already recorded? The UPI ref / UTR is the same in the SMS, the payment-app receipt
+     * and the bank statement, so a matching ref is certain. Otherwise same amount + type + date
+     * (and time, when both have one) is a likely duplicate.
      */
-    fromScreenshot(data, full, blocks = []) {
-        if (!TxnParser.isSensitive(full) && TxnParser.parse(full)) return this.fromText(data, full);
-        let sawSensitive = false;
-        for (let i = blocks.length - 1; i >= 0; i--) {
-            if (TxnParser.isSensitive(blocks[i])) { sawSensitive = true; continue; }
-            if (TxnParser.parse(blocks[i])) return this.fromText(data, blocks[i]);
+    duplicateOf(data, d) {
+        if (d.refNo) {
+            const byRef = data.transactions.find(t => t.refNo && t.refNo === d.refNo);
+            if (byRef) return { kind: 'ref', txn: byRef };
         }
-        return { reason: sawSensitive ? 'sensitive' : 'none' };
+        const same = data.transactions.find(t => (t.type === d.type || (t.type === 'Transfer' && d.type === 'Expense'))
+            && Math.abs(Number(t.amount) - d.amount) < 0.01 && t.date === d.date
+            && (!d.time || !t.time || t.time === d.time) && (!d.refNo || !t.refNo));
+        return same ? { kind: 'maybe', txn: same } : null;
+    },
+
+    /** "9:35pm", "9:35 PM", "21:35" → "21:35" (or ''). */
+    timeOf(text) {
+        let m = /\b(\d{1,2})[:.](\d{2})\s*([ap])\.?\s*m\b\.?/i.exec(text);
+        if (m) {
+            let h = +m[1] % 12;
+            if (m[3].toLowerCase() === 'p') h += 12;
+            return +m[2] < 60 && +m[1] <= 12 ? `${String(h).padStart(2, '0')}:${m[2]}` : '';
+        }
+        m = /\b([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/.exec(text);
+        return m ? `${m[1].padStart(2, '0')}:${m[2]}` : '';
+    },
+
+    ymd(dt) {
+        return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    },
+
+    /**
+     * Date (and time) written inside the message: 08-11-26, 08/11/2026, 08Nov26, 10 Nov 2026,
+     * 08112026, 2026-11-08. Returns { date, time } or null. Ignores future dates and anything older than ~3 months.
+     */
+    smsWhen(text, { yearless = false, now = new Date() } = {}) {
+        const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+        let d, mo, y, m;
+        if ((m = /\b(\d{1,2})[-/ ]?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-/ ,]*(\d{4}|\d{2})\b/i.exec(text))) { d = +m[1]; mo = months[m[2].toLowerCase()]; y = +m[3]; }
+        else if ((m = /\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/.exec(text))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+        else if ((m = /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/.exec(text))) { d = +m[1]; mo = +m[2]; y = +m[3]; }
+        else if ((m = /\b(0[1-9]|[12]\d|3[01])(0[1-9]|1[0-2])(20\d{2})\b/.exec(text))) { d = +m[1]; mo = +m[2]; y = +m[3]; }   // 08112026
+        else if (yearless && (m = /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})\b/i.exec(text))) {
+            d = +(m[1] || m[4]); mo = months[(m[2] || m[3]).toLowerCase()]; y = now.getFullYear();
+            if (new Date(y, mo - 1, d) > now) y -= 1;   // "28 Dec" seen in January
+        } else return null;
+        if (y < 100) y += 2000;
+        const date = new Date(y, mo - 1, d, 12);
+        const ageDays = (now.getTime() - date.getTime()) / 864e5;
+        if (isNaN(date) || date.getDate() !== d || ageDays < -1 || ageDays > 92) return null;
+        return { date: this.ymd(date), time: this.timeOf(text) };
+    },
+
+    /** Kept for callers that want a timestamp. */
+    smsDate(text) {
+        const w = this.smsWhen(text);
+        return w ? new Date(w.date + 'T12:00:00').getTime() : null;
+    },
+
+    /**
+     * Date separators in SMS apps: "Sunday • 3:12 PM", "Yesterday", "Today 10:02", "Sat, 8 Nov • 6:17 PM",
+     * or just "9:37 PM" (today). Returns { date, time } or null for anything that isn't a separator.
+     */
+    headerWhen(text, now = new Date()) {
+        const s = String(text).trim();
+        if (!s || s.length > 40 || /rs\.?\s*\d|₹|inr\s*\d|a\/c|credited|debited/i.test(s)) return null;
+        const time = this.timeOf(s);
+        const explicit = this.smsWhen(s, { yearless: true, now });
+        if (explicit) return { date: explicit.date, time: explicit.time || time };
+        const dt = new Date(now);
+        if (/\btoday\b/i.test(s)) return { date: this.ymd(dt), time };
+        if (/\byesterday\b/i.test(s)) { dt.setDate(dt.getDate() - 1); return { date: this.ymd(dt), time }; }
+        const w = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].findIndex(d => new RegExp(`\\b${d}[a-z]*\\b`, 'i').test(s));
+        if (w >= 0) { dt.setDate(dt.getDate() - ((now.getDay() - w + 7) % 7 || 7)); return { date: this.ymd(dt), time }; }
+        if (time && /^[\d:.\s]+[ap]\.?\s*m\.?$|^\d{1,2}:\d{2}$/i.test(s)) return { date: this.ymd(dt), time };
+        return null;
+    },
+
+    /** Parse one message. Returns { draft } or { reason: 'sensitive' | 'none' }. */
+    fromText(data, text, source = 'paste', fallback = null) {
+        if (TxnParser.isSensitive(text)) return { reason: 'sensitive' };
+        const t = TxnParser.parse(text);
+        if (!t) return { reason: 'none' };
+        const own = this.smsWhen(text);
+        return { draft: this.toDraft(data, { ...t, id: `${source}-${generateId()}`, source,
+            date: own?.date || fallback?.date, time: own?.time || fallback?.time || '' }) };
+    },
+
+    /** Every transaction in pasted text (one or several messages). Returns { drafts, sensitive }. */
+    draftsFromText(data, text) {
+        // Messages are separated by blank lines, or a new line that starts like a bank SMS does
+        const chunks = text.split(/\n\s*\n|\n(?=\s*(?:A\/c|Acct|Your a\/c|Dear (?:UPI )?(?:user|customer))\b)/i).map(c => c.trim()).filter(c => c.length >= 10);
+        if (chunks.length > 1) {
+            const many = this.collect(data, chunks, 'paste', text);
+            if (many.drafts.length > 1) return many;
+        }
+        return this.collect(data, [text.trim()], 'paste', text);
+    },
+
+    /** Every transaction in a screenshot's text blocks, dated by the SMS app's separators. */
+    draftsFromScreenshot(data, full, blocks = []) {
+        return this.collect(data, blocks.length ? blocks : [full], 'screenshot', full);
+    },
+
+    collect(data, pieces, source, whole) {
+        const drafts = [], seenRefs = new Set();
+        let when = null, sensitive = 0;
+        for (const piece of pieces) {
+            const header = this.headerWhen(piece);
+            if (header) { when = header; continue; }
+            const r = this.fromText(data, piece, source, when);
+            if (r.reason === 'sensitive') { sensitive++; continue; }
+            if (!r.draft || (r.draft.refNo && seenRefs.has(r.draft.refNo))) continue;
+            if (r.draft.refNo) seenRefs.add(r.draft.refNo);
+            drafts.push(r.draft);
+        }
+        // A payment receipt spreads one transaction over many blocks: try the whole text
+        if (!drafts.length && pieces.length > 1 && whole) {
+            const r = this.fromText(data, whole, source);
+            if (r.draft) drafts.push(r.draft);
+            else if (r.reason === 'sensitive') sensitive++;
+        }
+        return { drafts, sensitive };
     },
 
     learn(data, merchant, category) {

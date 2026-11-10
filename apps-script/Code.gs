@@ -9,7 +9,7 @@
 const SCHEMA = {
     Users: ['userId', 'displayName', 'email', 'salt', 'passHash', 'token', 'createdAt'],
     Accounts: ['id', 'userId', 'name', 'bank', 'type', 'last4', 'openingBalance', 'openingDate', 'isMain', 'color', 'archived', 'updatedAt'],
-    Transactions: ['id', 'userId', 'date', 'type', 'amount', 'accountId', 'accountName', 'toAccountId', 'toAccountName', 'category', 'paymentMode', 'note', 'source', 'updatedAt'],
+    Transactions: ['id', 'userId', 'date', 'type', 'amount', 'accountId', 'accountName', 'toAccountId', 'toAccountName', 'category', 'paymentMode', 'note', 'source', 'updatedAt', 'refNo', 'time'],
     Recurring: ['id', 'userId', 'name', 'amount', 'category', 'accountId', 'frequency', 'debitDay', 'startMonth', 'lastPaidMonth', 'isActive', 'autoPost', 'updatedAt'],
     Budgets: ['id', 'userId', 'month', 'category', 'amount', 'updatedAt'],
     Settings: ['id', 'userId', 'key', 'value', 'updatedAt'],
@@ -52,6 +52,9 @@ function sheet(name) {
         sh = ss.insertSheet(name);
         sh.getRange(1, 1, 1, SCHEMA[name].length).setValues([SCHEMA[name]]).setFontWeight('bold');
         sh.setFrozenRows(1);
+    } else if (sh.getLastColumn() < SCHEMA[name].length) {
+        // New columns are always added at the end, so older sheets just get the extra headers
+        sh.getRange(1, 1, 1, SCHEMA[name].length).setValues([SCHEMA[name]]).setFontWeight('bold');
     }
     return sh;
 }

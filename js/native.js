@@ -33,6 +33,7 @@ const Native = {
         });
         // Fired by the Android side when a message is shared to MoneyBook while the app is open
         this.plugin('MoneyCapture').addListener('captured', () => app.loadCaptures());
+        this.plugin('MoneyCapture').addListener('scanned', () => app.checkSharedScan());
         try {
             await this.plugin('LocalNotifications').createChannel({ id: 'reminders', name: 'Reminders', description: 'Daily and auto-debit reminders, budget alerts', importance: 4 });
         } catch { /* channel already exists */ }
@@ -72,6 +73,12 @@ const Native = {
         return this.plugin('MoneyCapture').scanImage({ data: dataUrl });
     },
 
+    /** Text of a screenshot shared to MoneyBook (held in memory only, cleared once read). */
+    async takeScan() {
+        if (!this.isNative) return null;
+        try { return await this.plugin('MoneyCapture').takeScan(); } catch { return null; }
+    },
+
     /** Id of the message just shared to MoneyBook (cleared once read), or ''. */
     async takeShared() {
         if (!this.isNative) return '';
@@ -87,6 +94,42 @@ const Native = {
     async requestNotificationPermission() {
         if (!this.isNative) return;
         await this.plugin('LocalNotifications').requestPermissions().catch(() => {});
+    },
+
+    /* ---------- fingerprint / face unlock ---------- */
+    BIO_KEY: id => `mb_bio_${id}`,
+
+    /** { available, label } for the phone's biometric unlock. */
+    async biometry() {
+        if (!this.isNative) return { available: false };
+        try {
+            const r = await this.plugin('BiometricAuthNative').checkBiometry();
+            const face = /face/i.test(String(r.biometryType)) || (r.biometryTypes || []).some(t => /face/i.test(String(t)));
+            return { available: !!r.isAvailable, label: face ? 'face' : 'fingerprint' };
+        } catch {
+            return { available: false };
+        }
+    },
+
+    /** Shows the system fingerprint / face prompt; resolves true on success, false if cancelled or failed. */
+    async biometricCheck(subtitle) {
+        try {
+            await this.plugin('BiometricAuthNative').internalAuthenticate({
+                reason: subtitle, androidTitle: 'Unlock MoneyBook', androidSubtitle: subtitle,
+                cancelTitle: 'Use password', allowDeviceCredential: true, androidConfirmationRequired: false,
+            });
+            return true;
+        } catch {
+            return false;
+        }
+    },
+
+    bioEnabled(id) {
+        try { return this.isNative && localStorage.getItem(this.BIO_KEY(id)) === '1'; } catch { return false; }
+    },
+
+    setBio(id, on) {
+        try { if (on) localStorage.setItem(this.BIO_KEY(id), '1'); else localStorage.removeItem(this.BIO_KEY(id)); } catch { /* ignore */ }
     },
 
     /* ---------- app updates (APK is installed outside the Play Store) ---------- */

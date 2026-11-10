@@ -142,16 +142,18 @@ const Statement = {
             const merchant = this.merchantFrom(r.desc);
             const atm = /\batm\b|cash wdl|cash withdrawal/i.test(r.desc) && r.type === 'Expense';
             const guess = Capture.guessCategory(data, `${merchant} ${r.desc}`, r.type);
+            const ref = (/(?:^|\D)(\d{12})(?:\D|$)/.exec(r.desc) || [])[1] || '';
             const draft = {
-                key: `row${i}`, date: r.date, amount: r.amount, desc: r.desc,
+                key: `row${i}`, date: r.date, amount: r.amount, desc: r.desc, refNo: ref,
                 type: atm && cash ? 'Transfer' : r.type,
                 toAccountId: atm && cash ? cash.id : '',
                 category: atm && cash ? 'transfer' : (guess.category || (r.type === 'Income' ? 'other_income' : 'misc')),
                 note: atm ? 'ATM withdrawal' : merchant,
                 paymentMode: this.modeFrom(r.desc),
             };
-            draft.duplicate = existing.some(t => Math.abs(t.amount - r.amount) < 0.01 && near(t.date, r.date)
-                && (t.type === draft.type || (t.type === 'Transfer' && draft.type !== 'Income')));
+            draft.duplicate = (ref && data.transactions.some(t => t.refNo === ref))
+                || existing.some(t => Math.abs(t.amount - r.amount) < 0.01 && near(t.date, r.date)
+                    && (t.type === draft.type || (t.type === 'Transfer' && draft.type !== 'Income')) && (!ref || !t.refNo));
             draft.beforeOpening = !!account && r.date < account.openingDate;
             draft.selected = !draft.duplicate && !draft.beforeOpening;
             return draft;

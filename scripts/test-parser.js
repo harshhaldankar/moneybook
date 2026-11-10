@@ -28,6 +28,20 @@ const tests = {
     gpayReceived: () => ok('Rahul Verma paid you ₹100', 'credit', 100, '', 'Rahul Verma'),
     gpayReceiptScreenshot: () => ok('To Swiggy\n₹250\nCompleted\n10 Nov 2026, 8:15 pm\nUPI transaction ID\n431234567895\nTo: SWIGGY\nswiggy@icici\nFrom: HARSH HALDANKAR (HDFC Bank)\nXXXX4521', 'debit', 250, '4521', 'Swiggy', 'UPI'),
     phonepeReceivedReceipt: () => ok('Received from\nRahul Verma\n₹1,200\nTransaction Successful\nUTR: 431234567896\nCredited to\nXXXXXX0123', 'credit', 1200, '0123', 'Rahul Verma'),
+    cboiCreditWithCompactDate: () => {
+        ok('A/c XX1386 credited by Rs. 1000.00 on 08112026 via UPI from VAISHALI MAHENDRA HALDAN via Ref No. 667832906937. -CBoI', 'credit', 1000, '1386', 'VAISHALI MAHENDRA HALDAN', 'UPI');
+        assert.strictEqual(TxnParser.parse('A/c XX1386 credited by Rs. 1000.00 on 08112026 via UPI from VAISHALI MAHENDRA HALDAN via Ref No. 667832906937. -CBoI').ref, '667832906937');
+    },
+    cboiDebitWithBalance: () => {
+        ok('A/c XX1386 debited by Rs. 120.00 via UPI with Ref No. 668019419482 Total Bal Rs. 837.18 Clr Bal Rs. 837.18. -CBoI', 'debit', 120, '1386', '', 'UPI');
+        assert.strictEqual(TxnParser.parse('A/c XX1386 debited by Rs. 120.00 via UPI with Ref No. 668019419482 Total Bal Rs. 837.18 Clr Bal Rs. 837.18. -CBoI').ref, '668019419482');
+    },
+    gpayReceiptPicksBankDigitsNotPayeeVpa: () => {
+        const r = 'G\nTo Gauresh Mahendra Haldankar\n₹120\nPay again\nCompleted\n10 Nov 2026, 9:35pm\nCentral Bank of India 1386\nPayment started\nPayment completed\nUPI transaction ID\n668019419482\nTo: Gauresh Mahendra Haldankar\n••••••9272@fam on FamApp by Trio\nFrom: Mr HARSH MAHENDRA HALDANKAR\n(Central Bank of India)\n••••ar95@okicici on Google Pay\nGoogle transaction ID\nCICAgPjtqtHMbA';
+        ok(r, 'debit', 120, '1386', 'Gauresh Mahendra Haldankar', 'UPI');
+        assert.strictEqual(TxnParser.parse(r).ref, '668019419482');
+    },
+    balanceOnlyFragmentIsNotATransaction: () => assert.strictEqual(TxnParser.parse('via UPI with Ref No. 631147348109 Total Bal Rs. 747.18 Clr Bal Rs. 747.18. -CBoI'), null),
     rejectsOtp: () => {
         assert.strictEqual(TxnParser.parse('123456 is your OTP for txn of Rs.2,500 at AMAZON on HDFC Bank Card XX9012. Valid for 10 mins. Do not share OTP'), null);
         assert.strictEqual(TxnParser.parse('Use verification code 4455 to log in to NetBanking'), null);

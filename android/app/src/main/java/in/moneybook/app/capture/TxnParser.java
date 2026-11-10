@@ -20,6 +20,7 @@ public final class TxnParser {
         public String last4 = "";
         public String merchant = "";
         public String mode = "UPI";
+        public String ref = "";       // UPI ref / UTR: the same number appears in SMS, app receipt and statement
     }
 
     private static final Pattern SENSITIVE = Pattern.compile(
@@ -49,7 +50,12 @@ public final class TxnParser {
     private static final Pattern RECEIPT_ID = Pattern.compile("(?i)\\b(upi (transaction|ref)( id| no)?|utr|transaction id|txn id|ref(erence)? (no|id))\\b");
     // A receipt's first line says the direction: "To Swiggy" (paid) vs "Received from …"
     private static final Pattern RECEIPT_IN = Pattern.compile("(?i)^\\s*(from\\b|received\\b|money received)");
-    private static final Pattern LAST4_MASKED = Pattern.compile("(?i)[x*•]{2,}\\s*([0-9]{4})\\b");
+    private static final Pattern LAST4_MASKED = Pattern.compile("(?i)[x*•]{2,}\\s*([0-9]{4})\\b(?!@)");
+    // "Central Bank of India 1386" on payment-app receipts
+    private static final Pattern LAST4_BANK = Pattern.compile("(?i)\\bbank(?: of [a-z]+)*\\s+([0-9]{4})\\b");
+    private static final Pattern REF = Pattern.compile(
+        "(?i)(?:ref(?:erence)?\\.?\\s*(?:no\\.?|number|id)?|utr(?:\\s*no\\.?)?|upi (?:transaction|ref)\\.?\\s*(?:id|no\\.?)?|transaction id|txn id|refno)"
+        + "\\s*[:.\\-]?\\s*([0-9]{9,18})\\b");
     private static final Pattern VPA = Pattern.compile("(?i)\\b([a-z0-9][a-z0-9._-]{1,40})@[a-z]{2,20}\\b");
     private static final String MERCHANT_END =
         "([A-Za-z][A-Za-z0-9 .&'_*-]{1,40}?)"
@@ -106,9 +112,13 @@ public final class TxnParser {
             String d = lm.group(1);
             t.last4 = d.length() > 4 ? d.substring(d.length() - 4) : d;
         } else {
-            Matcher mm = LAST4_MASKED.matcher(text);   // "XXXX4521" on receipts
-            if (mm.find()) t.last4 = mm.group(1);
+            Matcher bm = LAST4_BANK.matcher(text);     // "Central Bank of India 1386" on receipts
+            Matcher mm = LAST4_MASKED.matcher(text);   // "XXXX4521"
+            if (bm.find()) t.last4 = bm.group(1);
+            else if (mm.find()) t.last4 = mm.group(1);
         }
+        Matcher rm = REF.matcher(text);
+        if (rm.find()) t.ref = rm.group(1);
 
         t.merchant = merchant(text, t.type);
         String lower = text.toLowerCase(Locale.ROOT);
