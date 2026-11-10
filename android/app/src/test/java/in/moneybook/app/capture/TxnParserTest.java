@@ -107,6 +107,13 @@ public class TxnParserTest {
         TxnParser.Txn t = ok("A/c XX1386 debited by Rs. 120.00 via UPI with Ref No. 668019419482 Total Bal Rs. 837.18 Clr Bal Rs. 837.18. -CBoI",
             "debit", 120, "1386", "", "UPI");
         assertEquals("668019419482", t.ref);
+        assertEquals("bank balance", 837.18, t.balance, 0.001);
+    }
+
+    @Test public void balanceFromOtherBanks() {
+        assertEquals("avl bal", 38000, TxnParser.parse("Rs.2000 withdrawn from A/c XX4521 at ATM HDFC0001 on 08-11-26. Avl bal Rs 38,000").balance, 0.001);
+        assertEquals("avl bal after credit", 140000, TxnParser.parse("Rs.75,000.00 credited to HDFC Bank A/c XX4521 on 01-11-26 by NEFT from ACME TECHNOLOGIES PVT LTD. Avl bal Rs.1,40,000.00").balance, 0.001);
+        assertTrue(Double.isNaN(TxnParser.parse("INR 1,250.00 spent using ICICI Bank Card XX9012 on 08-Nov-26 on AMAZON PAY IN. Avl Limit: INR 98,750.00.").balance));
     }
 
     @Test public void gpayReceiptPicksBankDigitsNotPayeeVpa() {

@@ -114,8 +114,9 @@ const Native = {
     /** Shows the system fingerprint / face prompt; resolves true on success, false if cancelled or failed. */
     async biometricCheck(subtitle) {
         try {
+            // Subtitle only: Android shows "reason" as a second line, which repeated the same text
             await this.plugin('BiometricAuthNative').internalAuthenticate({
-                reason: subtitle, androidTitle: 'Unlock MoneyBook', androidSubtitle: subtitle,
+                androidTitle: 'MoneyBook', androidSubtitle: subtitle,
                 cancelTitle: 'Use password', allowDeviceCredential: true, androidConfirmationRequired: false,
             });
             return true;

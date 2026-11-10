@@ -67,6 +67,7 @@ public final class CaptureStore {
             o.put("merchant", t.merchant);
             o.put("mode", t.mode);
             o.put("ref", t.ref);
+            if (!Double.isNaN(t.balance)) o.put("balance", t.balance);
             o.put("source", source);
             o.put("ts", ts);
             items.put(o);

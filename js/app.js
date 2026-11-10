@@ -190,16 +190,22 @@ class App {
             this.switchAuthTab('login');
             document.getElementById('loginUser').value = bioUser;
             Native.biometry().then(b => { bioBtn.querySelector('span').textContent = `Unlock with ${b.label || 'fingerprint'}`; });
-            setTimeout(() => this.bioUnlock(), 350);
+            clearTimeout(this.bioTimer);
+            this.bioTimer = setTimeout(() => this.bioUnlock(), 350);
         }
     }
 
     async bioUnlock() {
         const id = this.bioUser;
-        if (!id || !Native.bioEnabled(id)) return;
-        if (await Native.biometricCheck(`Unlock @${id}`) && Store.unlockTrusted(id)) {
-            this.enterApp();
-            Store.flush();
+        if (!id || !Native.bioEnabled(id) || this.bioBusy || Store.userId) return;
+        this.bioBusy = true;
+        try {
+            if (await Native.biometricCheck(`Signed in as @${id}`) && Store.unlockTrusted(id)) {
+                this.enterApp();
+                Store.flush();
+            }
+        } finally {
+            this.bioBusy = false;
         }
     }
 
@@ -211,7 +217,7 @@ class App {
         if (!bio.available) return;
         localStorage.setItem(`mb_bio_asked_${id}`, '1');
         if (await this.confirm(`Unlock with ${bio.label}?`, `Next time, open MoneyBook with your ${bio.label} instead of typing your password. You can change this in Profile.`, 'Turn on')
-            && await Native.biometricCheck(`Turn on ${bio.label} unlock`)) {
+            && await Native.biometricCheck(`Confirm it's you to turn on ${bio.label} unlock`)) {
             Native.setBio(id, true);
             this.toast(`${bio.label[0].toUpperCase()}${bio.label.slice(1)} unlock is on`, 'success');
         }
@@ -592,6 +598,34 @@ class App {
         this.openPasteSheet(text && text.length < 4000 && !TxnParser.isSensitive(text) ? text : '');
     }
 
+    /**
+     * Bank SMS state the balance after each payment ("Total Bal Rs. 837.18"). If MoneyBook's
+     * balance at that moment differs, offer to correct the account's starting balance.
+     */
+    async checkBankBalance(entries) {
+        const known = entries.filter(e => e.accountId && typeof e.balanceAfter === 'number' && isFinite(e.balanceAfter))
+            .sort((a, b) => `${a.date} ${a.time || ''}`.localeCompare(`${b.date} ${b.time || ''}`));
+        const last = known[known.length - 1];
+        const acc = last && this.accountById(last.accountId);
+        if (!acc) return;
+        const ours = Calc.accountBalanceAt(this.data, acc, last.date, last.time);
+        const diff = Math.round((last.balanceAfter - ours) * 100) / 100;
+        if (Math.abs(diff) < 1) return;
+        const ok = await this.confirm('Balance doesn\'t match your bank',
+            `Your bank says ${formatCurrency(last.balanceAfter)} after this transaction, but MoneyBook shows ${formatCurrency(ours)} (${diff > 0 ? '+' : ''}${formatCurrency(diff)}). `
+            + `Usually the starting balance is off or some payments weren't added. Correct ${acc.name}'s starting balance so it matches the bank?`, 'Fix balance');
+        if (!ok) return;
+        // A sync may have refreshed the data while the dialog was open: work on the current account
+        const live = this.accountById(last.accountId);
+        if (!live) return;
+        const now = Calc.accountBalanceAt(this.data, live, last.date, last.time);
+        // Starting balance that makes MoneyBook equal the bank at that moment
+        const openingCounted = live.openingDate <= last.date ? Number(live.openingBalance) || 0 : 0;
+        live.openingBalance = Math.round((last.balanceAfter - (now - openingCounted)) * 100) / 100;
+        if (live.openingDate > last.date) live.openingDate = last.date;
+        await this.persist(`${live.name} now matches your bank: ${formatCurrency(Calc.accountBalance(this.data, live))}`);
+    }
+
     /** One draft → the normal review sheet; several (or a duplicate) → the checklist. */
     reviewDrafts(drafts, title) {
         if (drafts.length === 1 && !drafts[0].duplicate) this.openTxnSheet(null, 'Expense', drafts[0]);
@@ -734,6 +768,7 @@ class App {
                 });
                 this.closeSheet();
                 await this.persist(`${chosen.length} transaction${chosen.length === 1 ? '' : 's'} added`);
+                await this.checkBankBalance(chosen.map(d => ({ ...d, accountId: d.accountId || accountFallback })));
             });
             update();
         });
@@ -1533,7 +1568,7 @@ class App {
             document.getElementById('bioTitle').textContent = `Unlock with ${bio.label}`;
             document.getElementById('bioToggle').addEventListener('change', async e => {
                 const on = e.target.checked;
-                if (on && !await Native.biometricCheck(`Turn on ${bio.label} unlock`)) { e.target.checked = false; return; }
+                if (on && !await Native.biometricCheck(`Confirm it's you to turn on ${bio.label} unlock`)) { e.target.checked = false; return; }
                 Native.setBio(Store.userId, on);
                 this.toast(on ? `${bio.label[0].toUpperCase()}${bio.label.slice(1)} unlock is on` : `${bio.label[0].toUpperCase()}${bio.label.slice(1)} unlock is off`, 'success');
             });
@@ -1738,6 +1773,7 @@ class App {
                 d.settings.lastAccount = { ...last, [state.type]: accountId };
                 this.closeSheet();
                 await this.persist(isEdit ? 'Transaction updated' : `${state.type} of ${formatCurrency(record.amount)} saved`);
+                if (draft) await this.checkBankBalance([{ ...record, balanceAfter: draft.balanceAfter }]);
             });
 
             body.querySelector('#txnDelete')?.addEventListener('click', async () => {
@@ -1789,6 +1825,12 @@ class App {
                         <input type="date" id="aOpeningDate" value="${acc?.openingDate || todayStr()}" required>
                     </div>
                 </div>
+                ${isEdit ? `
+                <div class="form-group">
+                    <label for="aBankNow">Balance in bank right now (optional)</label>
+                    <input type="number" id="aBankNow" inputmode="decimal" step="0.01" placeholder="MoneyBook shows ${escapeHtml(String(Calc.accountBalance(d, acc)))}">
+                    <small>Enter what your bank app shows and MoneyBook adjusts the starting balance to match.</small>
+                </div>` : ''}
                 <label class="check-row">
                     <input type="checkbox" id="aMain" ${acc?.isMain || isFirst ? 'checked' : ''} ${isFirst ? 'disabled' : ''}>
                     <span><b>Main account</b> — shown first, and kept separate from "other accounts" on Home</span>
@@ -1838,6 +1880,12 @@ class App {
                     color: chosenColor,
                     archived,
                 };
+                const bankNow = parseFloat(body.querySelector('#aBankNow')?.value);
+                if (isEdit && isFinite(bankNow)) {
+                    // Starting balance = bank balance minus everything recorded for this account
+                    const movements = Calc.accountBalance(d, record) - (Number(record.openingBalance) || 0);
+                    record.openingBalance = Math.round((bankNow - movements) * 100) / 100;
+                }
                 if (record.isMain) d.accounts.forEach(a => { a.isMain = false; });
                 if (isEdit) d.accounts[d.accounts.findIndex(a => a.id === acc.id)] = record;
                 else d.accounts.push(record);

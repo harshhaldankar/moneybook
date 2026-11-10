@@ -21,6 +21,7 @@ public final class TxnParser {
         public String merchant = "";
         public String mode = "UPI";
         public String ref = "";       // UPI ref / UTR: the same number appears in SMS, app receipt and statement
+        public double balance = Double.NaN;   // bank balance after this transaction, when the SMS states it
     }
 
     private static final Pattern SENSITIVE = Pattern.compile(
@@ -53,6 +54,9 @@ public final class TxnParser {
     private static final Pattern LAST4_MASKED = Pattern.compile("(?i)[x*•]{2,}\\s*([0-9]{4})\\b(?!@)");
     // "Central Bank of India 1386" on payment-app receipts
     private static final Pattern LAST4_BANK = Pattern.compile("(?i)\\bbank(?: of [a-z]+)*\\s+([0-9]{4})\\b");
+    // "Total Bal Rs. 837.18", "Avl Bal Rs 38,000", "Available balance: INR 1,20,000" (not credit-card limits)
+    private static final Pattern BALANCE = Pattern.compile(
+        "(?i)\\b(?:avl|avbl|available|total|clr|clear|closing|a/c)?\\.?\\s*bal(?:ance)?\\.?\\s*(?:is|:|-)?\\s*(?:rs\\.?|inr|₹)\\s*(-?[0-9][0-9,]*(?:\\.[0-9]{1,2})?)");
     private static final Pattern REF = Pattern.compile(
         "(?i)(?:ref(?:erence)?\\.?\\s*(?:no\\.?|number|id)?|utr(?:\\s*no\\.?)?|upi (?:transaction|ref)\\.?\\s*(?:id|no\\.?)?|transaction id|txn id|refno)"
         + "\\s*[:.\\-]?\\s*([0-9]{9,18})\\b");
@@ -119,6 +123,10 @@ public final class TxnParser {
         }
         Matcher rm = REF.matcher(text);
         if (rm.find()) t.ref = rm.group(1);
+        Matcher balm = BALANCE.matcher(text);
+        if (balm.find()) {
+            try { t.balance = Double.parseDouble(balm.group(1).replace(",", "")); } catch (NumberFormatException ignored) { /* leave NaN */ }
+        }
 
         t.merchant = merchant(text, t.type);
         String lower = text.toLowerCase(Locale.ROOT);

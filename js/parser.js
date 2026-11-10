@@ -38,6 +38,8 @@ const TxnParser = (() => {
     const LAST4_MASKED = /[x*•]{2,}\s*([0-9]{4})\b(?!@)/i;
     // "Central Bank of India 1386" on payment-app receipts
     const LAST4_BANK = /\bbank(?: of [a-z]+)*\s+([0-9]{4})\b/i;
+    // "Total Bal Rs. 837.18", "Avl Bal Rs 38,000", "Available balance: INR 1,20,000" (not credit-card limits)
+    const BALANCE = /\b(?:avl|avbl|available|total|clr|clear|closing|a\/c)?\.?\s*bal(?:ance)?\.?\s*(?:is|:|-)?\s*(?:rs\.?|inr|₹)\s*(-?[0-9][0-9,]*(?:\.[0-9]{1,2})?)/i;
     const REF = /(?:ref(?:erence)?\.?\s*(?:no\.?|number|id)?|utr(?:\s*no\.?)?|upi (?:transaction|ref)\.?\s*(?:id|no\.?)?|transaction id|txn id|refno)\s*[:.-]?\s*([0-9]{9,18})\b/i;
     const VPA = /\b([a-z0-9][a-z0-9._-]{1,40})@[a-z]{2,20}\b/i;
     const MERCHANT_END = "([A-Za-z][A-Za-z0-9 .&'_*-]{1,40}?)"
@@ -76,7 +78,8 @@ const TxnParser = (() => {
         return !!text && SENSITIVE.test(text);
     }
 
-    /** Returns { amount, type: 'debit'|'credit', last4, merchant, mode, ref } or null. ref = UPI ref / UTR. */
+    /** Returns { amount, type: 'debit'|'credit', last4, merchant, mode, ref, balance } or null.
+     *  ref = UPI ref / UTR; balance = bank balance after the transaction, when the SMS states it. */
     function parse(text) {
         if (!text || text.length < 10 || text.length > 1000) return null;
         if (isSensitive(text) || NOT_A_TXN.test(text)) return null;
@@ -109,7 +112,9 @@ const TxnParser = (() => {
         else if (lower.includes('card')) mode = 'Card';
         else if (/\b(neft|imps|rtgs|net ?banking)\b/.test(lower)) mode = 'Net Banking';
 
-        return { amount, type, last4, merchant: merchant(text, type), mode, ref: rf ? rf[1] : '' };
+        const bal = BALANCE.exec(text);
+        return { amount, type, last4, merchant: merchant(text, type), mode, ref: rf ? rf[1] : '',
+            balance: bal ? parseFloat(bal[1].replace(/,/g, '')) : null };
     }
 
     return { parse, isSensitive };

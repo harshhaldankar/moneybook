@@ -41,6 +41,12 @@ const tests = {
         ok(r, 'debit', 120, '1386', 'Gauresh Mahendra Haldankar', 'UPI');
         assert.strictEqual(TxnParser.parse(r).ref, '668019419482');
     },
+    bankBalance: () => {
+        assert.strictEqual(TxnParser.parse('A/c XX1386 debited by Rs. 120.00 via UPI with Ref No. 668019419482 Total Bal Rs. 837.18 Clr Bal Rs. 837.18. -CBoI').balance, 837.18);
+        assert.strictEqual(TxnParser.parse('Rs.2000 withdrawn from A/c XX4521 at ATM HDFC0001 on 08-11-26. Avl bal Rs 38,000').balance, 38000);
+        assert.strictEqual(TxnParser.parse('Rs.75,000.00 credited to HDFC Bank A/c XX4521 on 01-11-26 by NEFT from ACME TECHNOLOGIES PVT LTD. Avl bal Rs.1,40,000.00').balance, 140000);
+        assert.strictEqual(TxnParser.parse('INR 1,250.00 spent using ICICI Bank Card XX9012 on 08-Nov-26 on AMAZON PAY IN. Avl Limit: INR 98,750.00.').balance, null);
+    },
     balanceOnlyFragmentIsNotATransaction: () => assert.strictEqual(TxnParser.parse('via UPI with Ref No. 631147348109 Total Bal Rs. 747.18 Clr Bal Rs. 747.18. -CBoI'), null),
     rejectsOtp: () => {
         assert.strictEqual(TxnParser.parse('123456 is your OTP for txn of Rs.2,500 at AMAZON on HDFC Bank Card XX9012. Valid for 10 mins. Do not share OTP'), null);

@@ -516,6 +516,7 @@ const Capture = {
             note: cap.merchant || '',
             last4: cap.last4 || '',
             refNo: cap.ref || '',
+            balanceAfter: typeof cap.balance === 'number' && isFinite(cap.balance) ? cap.balance : null,
             source: cap.source || 'share',
         };
         draft.duplicate = this.duplicateOf(data, draft);
@@ -674,6 +675,22 @@ const Calc = {
             }
         }
         return bal;
+    },
+
+    /** Balance of an account right after `date` `time` (transactions later that day are left out when both have a time). */
+    accountBalanceAt(data, account, date, time = '') {
+        let bal = account.openingDate <= date ? Number(account.openingBalance) || 0 : 0;
+        for (const t of data.transactions) {
+            if (t.date > date || (t.date === date && time && t.time && t.time > time)) continue;
+            const amt = Number(t.amount) || 0;
+            if (t.type === 'Transfer') {
+                if (t.accountId === account.id) bal -= amt;
+                if (t.toAccountId === account.id) bal += amt;
+            } else if (t.accountId === account.id) {
+                bal += t.type === 'Income' ? amt : -amt;
+            }
+        }
+        return Math.round(bal * 100) / 100;
     },
 
     totalBalance(data, upToDate = null) {
