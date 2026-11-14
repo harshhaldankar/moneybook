@@ -4,4 +4,6 @@
     <string name="title_activity_main">MoneyBook</string>
     <string name="package_name">in.moneybook.app</string>
     <string name="custom_url_scheme">in.moneybook.app</string>
+    <!-- GitHub repository the app checks for new releases (same as updateRepo in js/config.js) -->
+    <string name="update_repo" translatable="false">harshhaldankar/moneybook</string>
 </resources>

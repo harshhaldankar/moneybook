@@ -10,12 +10,14 @@ import com.getcapacitor.BridgeActivity;
 import in.moneybook.app.capture.CaptureHandler;
 import in.moneybook.app.capture.MoneyCapturePlugin;
 import in.moneybook.app.capture.ScreenshotReader;
+import in.moneybook.app.update.UpdateCheckService;
 
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(MoneyCapturePlugin.class);
         super.onCreate(savedInstanceState);
+        UpdateCheckService.schedule(this);
         handleShare(getIntent());
     }
 
