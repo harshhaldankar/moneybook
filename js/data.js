@@ -125,6 +125,19 @@ function escapeHtml(str) {
     return String(str ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 
+/** Display-only: bank SMS shout merchant names ("UBER INDIA"); show them as "Uber India".
+ *  Mixed-case text is left alone, and bank/payment acronyms stay in capitals. Stored data never changes. */
+const KEEP_CAPS = new Set(['UPI', 'SBI', 'HDFC', 'ICICI', 'IDFC', 'PNB', 'BOB', 'IOB', 'UCO', 'RBL', 'AU', 'ATM', 'EMI', 'SIP', 'NEFT', 'IMPS', 'RTGS',
+    'POS', 'ACH', 'NACH', 'UTR', 'LIC', 'GST', 'BSNL', 'BESCOM', 'MSEB', 'IRCTC', 'KFC', 'OTT', 'TV', 'II', 'III', 'HP', 'BPCL', 'IOCL', 'ONGC']);
+function displayName(str) {
+    const s = String(str ?? '');
+    if (!/[A-Z]{2}/.test(s) || /[a-z]/.test(s)) return s;
+    return s.toLowerCase().replace(/[a-z0-9&']+/g, w => {
+        const up = w.toUpperCase();
+        return KEEP_CAPS.has(up) ? up : w.charAt(0).toUpperCase() + w.slice(1);
+    });
+}
+
 function getOrdinal(n) {
     const s = ['th', 'st', 'nd', 'rd'];
     const v = n % 100;

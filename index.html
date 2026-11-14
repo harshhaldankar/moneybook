@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#2f5bea">
+    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#121314" media="(prefers-color-scheme: dark)">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>MoneyBook</title>
@@ -12,9 +13,9 @@
     <link rel="apple-touch-icon" href="icons/icon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="css/icons.css">
     <link rel="stylesheet" href="css/style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -28,7 +29,7 @@
             <ul class="auth-features">
                 <li><i class="fas fa-building-columns"></i> Every bank account</li>
                 <li><i class="fas fa-piggy-bank"></i> Monthly savings goals</li>
-                <li><i class="fas fa-bell"></i> Smart reminders</li>
+                <li><i class="fas fa-bell"></i> Auto-debit reminders</li>
             </ul>
         </div>
         <div class="auth-card">
@@ -43,13 +44,13 @@
                     <input type="url" id="apiUrl" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="none" required>
                 </div>
                 <p class="auth-error" id="connectError"></p>
-                <button type="submit" class="btn btn-primary btn-block">Connect <i class="fas fa-plug"></i></button>
+                <button type="submit" class="btn btn-primary btn-block">Connect</button>
                 <button type="button" class="link-btn center-btn" id="connectCancel" hidden>Cancel</button>
             </form>
 
             <div class="auth-tabs" id="authTabs">
-                <button class="auth-tab active" data-auth="login">Login</button>
-                <button class="auth-tab" data-auth="signup">New User</button>
+                <button class="auth-tab active" data-auth="login">Log in</button>
+                <button class="auth-tab" data-auth="signup">New user</button>
             </div>
 
             <form id="loginForm" class="auth-form">
@@ -66,18 +67,18 @@
                     </div>
                 </div>
                 <p class="auth-error" id="loginError"></p>
-                <button type="submit" class="btn btn-primary btn-block">Login <i class="fas fa-arrow-right"></i></button>
+                <button type="submit" class="btn btn-primary btn-block">Log in</button>
                 <button type="button" class="btn btn-secondary btn-block" id="bioUnlock" hidden><i class="fas fa-fingerprint"></i> <span>Unlock with fingerprint</span></button>
             </form>
 
             <form id="signupForm" class="auth-form" hidden>
                 <div class="form-group">
-                    <label for="signupName">Your Name</label>
-                    <input type="text" id="signupName" placeholder="e.g., Harsh" required>
+                    <label for="signupName">Your name</label>
+                    <input type="text" id="signupName" placeholder="Harsh" required>
                 </div>
                 <div class="form-group">
-                    <label for="signupUser">Choose a User ID</label>
-                    <input type="text" id="signupUser" placeholder="e.g., harsh01" autocomplete="username" autocapitalize="none" required>
+                    <label for="signupUser">Choose a user ID</label>
+                    <input type="text" id="signupUser" placeholder="harsh01" autocomplete="username" autocapitalize="none" required>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -85,13 +86,13 @@
                         <input type="password" id="signupPass" autocomplete="new-password" minlength="6" required>
                     </div>
                     <div class="form-group">
-                        <label for="signupPass2">Confirm Password</label>
+                        <label for="signupPass2">Confirm password</label>
                         <input type="password" id="signupPass2" autocomplete="new-password" minlength="6" required>
                     </div>
                 </div>
                 <p class="auth-note"><i class="fas fa-shield-halved"></i> Only you can see your data. It's backed up and syncs across your devices.</p>
                 <p class="auth-error" id="signupError"></p>
-                <button type="submit" class="btn btn-primary btn-block">Create Account <i class="fas fa-user-plus"></i></button>
+                <button type="submit" class="btn btn-primary btn-block">Create account</button>
             </form>
 
             <p class="server-line" id="serverLine"><i class="fas fa-table"></i> Google Sheet connected · <button type="button" class="link-btn" id="changeServer">Change</button></p>

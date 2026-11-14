@@ -5,7 +5,7 @@
 const TOP_VIEWS = ['home', 'activity', 'savings', 'more'];
 const VIEW_TITLES = {
     home: 'MoneyBook', activity: 'Activity', savings: 'Savings', more: 'More',
-    accounts: 'Bank Accounts', budgets: 'Budgets', recurring: 'Auto-Debits', reports: 'Reports', profile: 'Profile & Security',
+    accounts: 'Bank accounts', budgets: 'Budgets', recurring: 'Auto-debits', reports: 'Reports', profile: 'Profile and security',
     automation: 'Share SMS & Reminders',
 };
 const IDLE_LOCK_MS = 10 * 60 * 1000;
@@ -442,11 +442,6 @@ class App {
         return this.hideBalances ? '₹ ••••••' : formatCurrency(amount);
     }
 
-    greeting() {
-        const h = new Date().getHours();
-        return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
-    }
-
     /** Ring showing progress to the savings target (or savings rate when no target is set). */
     savingsRing(s) {
         const hasTarget = s.target > 0;
@@ -470,13 +465,11 @@ class App {
     renderHome() {
         const d = this.data;
         const el = document.getElementById('view-home');
-        const firstName = escapeHtml(d.profile.displayName.split(' ')[0]);
         const today = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
         const header = `
             <div class="home-head">
                 <div>
-                    <p class="greeting">${this.greeting()}, ${firstName}</p>
-                    <small>${today}</small>
+                    <p class="greeting">${today}</p>
                 </div>
             </div>`;
 
@@ -563,7 +556,7 @@ class App {
                         <div class="saved-line"><span>Saved</span><b class="${s.saved < 0 ? 'expense-c' : 'income-c'}">${formatCurrency(s.saved)}</b></div>
                     </div>
                 </div>
-                ${s.target ? `<p class="month-note">${s.saved >= s.target ? `🎉 You beat your ${formatCurrency(s.target)} target by ${formatCurrency(s.saved - s.target)}` : `${formatCurrency(s.target - s.saved)} more to reach your ${formatCurrency(s.target)} target`}</p>`
+                ${s.target ? `<p class="month-note">${s.saved >= s.target ? `${formatCurrency(s.saved - s.target)} above your ${formatCurrency(s.target)} target` : `${formatCurrency(s.target - s.saved)} more to reach your ${formatCurrency(s.target)} target`}</p>`
                     : `<button class="target-empty" data-action="edit-target"><i class="fas fa-bullseye"></i> Set a monthly savings target</button>`}
                 <div class="carry-row">
                     <div><span>Carried in</span><b>${this.money(s.openingBalance)}</b></div>
@@ -666,7 +659,7 @@ class App {
                 if (!n) { preview.innerHTML = '<span class="muted"><i class="fas fa-circle-question"></i> No debit or credit found yet</span>'; return; }
                 if (n > 1) { preview.innerHTML = `<span class="income-c"><i class="fas fa-check"></i> ${n} transactions found</span>`; return; }
                 const d = result.drafts[0];
-                preview.innerHTML = `<span class="${d.type === 'Income' ? 'income-c' : 'expense-c'}"><i class="fas fa-check"></i> ${d.type === 'Income' ? 'Received' : 'Spent'} ${formatCurrency(d.amount)}</span>${d.note ? ` · ${escapeHtml(d.note)}` : ''} · ${friendlyDate(d.date)}`;
+                preview.innerHTML = `<span class="${d.type === 'Income' ? 'income-c' : 'expense-c'}"><i class="fas fa-check"></i> ${d.type === 'Income' ? 'Received' : 'Spent'} ${formatCurrency(d.amount)}</span>${d.note ? ` · ${escapeHtml(displayName(d.note))}` : ''} · ${friendlyDate(d.date)}`;
             };
             area.addEventListener('input', update);
             body.querySelector('#pasteFromClipboard').addEventListener('click', async () => {
@@ -733,7 +726,7 @@ class App {
                         <label class="statement-row ${d.selected ? '' : 'off'}">
                             <input type="checkbox" data-key="${d.key}" ${d.selected ? 'checked' : ''}>
                             <span class="txn-main">
-                                <b>${escapeHtml(d.note || (d.type === 'Income' ? 'Money received' : 'UPI payment'))}</b>
+                                <b>${escapeHtml(displayName(d.note) || (d.type === 'Income' ? 'Money received' : 'UPI payment'))}</b>
                                 <small>${friendlyDate(d.date)}${d.time ? ` · ${timeLabel(d.time)}` : ''} · ${escapeHtml(getCategory(d.category || (d.type === 'Income' ? 'other_income' : 'misc')).name)}${d.accountId ? ` · ${escapeHtml(this.accountName(d.accountId))}` : ''}${d.refNo ? ` · Ref …${escapeHtml(d.refNo.slice(-4))}` : ''}
                                 ${d.duplicate ? `<br><span class="warn-c">${d.duplicate.kind === 'ref' ? 'Already added (same UPI ref)' : 'Possibly already added'}</span>` : ''}</small>
                             </span>
@@ -840,7 +833,7 @@ class App {
                     <label class="statement-row ${d.selected ? '' : 'off'}">
                         <input type="checkbox" data-key="${d.key}" ${d.selected ? 'checked' : ''}>
                         <span class="txn-main">
-                            <b>${escapeHtml(d.note)}</b>
+                            <b>${escapeHtml(displayName(d.note))}</b>
                             <small>${friendlyDate(d.date)} · ${escapeHtml(getCategory(d.category).name)}${d.duplicate ? ' · <span class="warn-c">already added</span>' : d.beforeOpening ? ' · <span class="warn-c">before opening date</span>' : ''}</small>
                         </span>
                         <span class="txn-amt ${d.type === 'Income' ? 'income-c' : d.type === 'Transfer' ? 'transfer-c' : 'expense-c'}">${d.type === 'Income' ? '+' : d.type === 'Transfer' ? '' : '-'}${formatCurrency(d.amount)}</span>
@@ -897,7 +890,7 @@ class App {
                 await this.resolveCaptures(ready.map(c => c.captureId), false);
                 await Native.takeShared();
                 await this.persist(ready.length === 1
-                    ? `${formatCurrency(ready[0].amount)} at ${ready[0].note || 'merchant'} saved as ${getCategory(ready[0].category).name}`
+                    ? `${formatCurrency(ready[0].amount)} at ${displayName(ready[0].note) || 'merchant'} saved as ${getCategory(ready[0].category).name}`
                     : `${ready.length} shared transactions saved`);
                 return;
             }
@@ -954,7 +947,7 @@ class App {
                         <button class="rec-info" data-action="review-capture" data-id="${escapeHtml(c.captureId)}">
                             <span class="txn-icon ${c.type.toLowerCase()}"><i class="${c.category ? getCategory(c.category).icon : 'fas fa-question'}"></i></span>
                             <span class="txn-main">
-                                <b>${escapeHtml(c.note || (c.type === 'Income' ? 'Money received' : 'Payment'))}</b>
+                                <b>${escapeHtml(displayName(c.note) || (c.type === 'Income' ? 'Money received' : 'Payment'))}</b>
                                 <small>${escapeHtml(cat)} · ${escapeHtml(acc)} · ${formatDate(c.date)}</small>
                             </span>
                             <span class="txn-amt ${c.type === 'Income' ? 'income-c' : 'expense-c'}">${c.type === 'Income' ? '+' : '-'}${formatCurrency(c.amount)}</span>
@@ -1066,7 +1059,7 @@ class App {
         if (!alerts.length) return '';
         return `
             <div class="card">
-                <div class="card-header"><h3>Budget Alerts</h3><button class="link-btn" data-action="go" data-view="budgets">Budgets →</button></div>
+                <div class="card-header"><h3>Budget alerts</h3><button class="link-btn" data-action="go" data-view="budgets">Budgets →</button></div>
                 ${alerts.map(b => `
                     <div class="alert-row ${b.spent > b.amount ? 'over' : ''}">
                         <i class="${getCategory(b.category).icon}"></i>
@@ -1094,7 +1087,7 @@ class App {
                 <button class="txn-row" data-action="edit-txn" data-id="${t.id}">
                     <span class="txn-icon ${t.type.toLowerCase()}"><i class="${cat.icon}"></i></span>
                     <span class="txn-main">
-                        <b>${escapeHtml(t.note || cat.name)}</b>
+                        <b>${escapeHtml(displayName(t.note) || cat.name)}</b>
                         <small>${t.note ? escapeHtml(cat.name) + ' · ' : ''}${sub}</small>
                     </span>
                     <span class="txn-amt ${amtClass}">${sign}${formatCurrency(t.amount)}</span>
@@ -1120,7 +1113,7 @@ class App {
         el.innerHTML = `
             ${this.monthSwitcher()}
             <div class="filter-bar">
-                <div class="search-box"><i class="fas fa-magnifying-glass"></i><input type="search" id="actSearch" placeholder="Search notes, category, amount" value="${escapeHtml(f.search)}"></div>
+                <div class="search-box"><i class="fas fa-magnifying-glass"></i><input type="search" id="actSearch" placeholder="Search" value="${escapeHtml(f.search)}"></div>
                 <div class="chip-scroll">
                     <button class="filter-chip ${f.account === 'all' ? 'active' : ''}" data-filter-account="all">All accounts</button>
                     ${d.accounts.map(a => `<button class="filter-chip ${f.account === a.id ? 'active' : ''}" data-filter-account="${a.id}"><span class="dot" style="background:${a.color}"></span>${escapeHtml(a.name)}</button>`).join('')}
@@ -1163,7 +1156,7 @@ class App {
             ${this.monthSwitcher()}
 
             <div class="card">
-                <div class="card-header"><h3>${monthLabel(this.month)}</h3><button class="link-btn" data-action="edit-target"><i class="fas fa-pen"></i> Target</button></div>
+                <div class="card-header"><h3>Savings</h3><button class="link-btn" data-action="edit-target"><i class="fas fa-pen"></i> Target</button></div>
                 <div class="big-number">
                     <span>Saved this month</span>
                     <b class="${s.saved < 0 ? 'expense-c' : ''}">${formatCurrency(s.saved)}</b>
@@ -1172,7 +1165,7 @@ class App {
             </div>
 
             <div class="card">
-                <h3>Carry Forward</h3>
+                <h3>Carry forward</h3>
                 <div class="flow">
                     <div class="flow-row"><span>Carried in from ${monthLabel(shiftMonth(this.month, -1), true)}</span><b>${formatCurrency(s.openingBalance)}</b></div>
                     <div class="flow-row"><span><i class="fas fa-plus income-c"></i> Income</span><b class="income-c">${formatCurrency(s.income)}</b></div>
@@ -1208,7 +1201,7 @@ class App {
                 <div class="card-header padded"><h3>Month on Month</h3></div>
                 <div class="table-wrap">
                     <table class="mom-table">
-                        <thead><tr><th>Month</th><th>Income</th><th>Spent</th><th>Saved</th><th>Target</th><th>vs Target</th><th>Carry Fwd</th></tr></thead>
+                        <thead><tr><th>Month</th><th>Income</th><th>Spent</th><th>Saved</th><th>Target</th><th>vs Target</th><th>Carry fwd</th></tr></thead>
                         <tbody>
                             ${[...history].reverse().map(r => `
                             <tr class="${r.monthKey === this.month ? 'current' : ''}" data-action="month-set" data-month="${r.monthKey}">
@@ -1238,6 +1231,8 @@ class App {
     }
 
     chartDefaults() {
+        Chart.defaults.font.family = "'Geist', system-ui, sans-serif";
+        const tick = { family: "'Geist Mono', ui-monospace, monospace", size: 11 };
         return {
             responsive: true,
             maintainAspectRatio: false,
@@ -1247,8 +1242,8 @@ class App {
                 tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${formatCurrency(ctx.parsed.y)}` } },
             },
             scales: {
-                x: { grid: { display: false }, ticks: { color: this.cssVar('--text-muted') }, border: { color: this.cssVar('--border') } },
-                y: { grid: { color: this.cssVar('--grid') }, border: { display: false }, ticks: { color: this.cssVar('--text-muted'), callback: v => formatCompact(v) } },
+                x: { grid: { display: false }, ticks: { color: this.cssVar('--text-muted'), font: tick }, border: { color: this.cssVar('--border') } },
+                y: { grid: { color: this.cssVar('--grid') }, border: { display: false }, ticks: { color: this.cssVar('--text-muted'), font: tick, callback: v => formatCompact(v) } },
             },
         };
     }
@@ -1299,7 +1294,7 @@ class App {
             <div class="card flush menu">
                 ${item('automation', 'fas fa-share-nodes', 'Share SMS & Reminders', Native.isNative ? 'Share bank SMS, reminders' : 'Reminders and setup for the Android app')}
                 <button class="menu-item" data-action="import-statement"><span class="menu-icon"><i class="fas fa-file-import"></i></span><span class="menu-text"><b>Import bank statement</b><small>Excel or CSV from net banking</small></span><i class="fas fa-chevron-right"></i></button>
-                ${item('accounts', 'fas fa-building-columns', 'Bank Accounts', `${this.activeAccounts().length} active · add, edit, set main`)}
+                ${item('accounts', 'fas fa-building-columns', 'Bank accounts', `${this.activeAccounts().length} active · add, edit, set main`)}
                 ${item('budgets', 'fas fa-chart-simple', 'Budgets', 'Monthly limits per category')}
                 ${item('recurring', 'fas fa-repeat', 'Auto-Debits', 'SIPs, EMIs, rent, subscriptions')}
                 ${item('reports', 'fas fa-chart-pie', 'Reports', 'Where your money goes')}
@@ -1317,7 +1312,7 @@ class App {
         const split = Calc.balanceSplit(d);
         const row = a => `
             <button class="account-row ${a.archived ? 'archived' : ''}" data-action="edit-account" data-id="${a.id}">
-                <span class="acc-avatar" style="background:${a.color}"><i class="fas ${a.type === 'Cash / Wallet' ? 'fa-wallet' : a.type === 'Credit Card' ? 'fa-credit-card' : 'fa-building-columns'}"></i></span>
+                <span class="acc-avatar" style="--acc:${a.color}"><i class="fas ${a.type === 'Cash / Wallet' ? 'fa-wallet' : a.type === 'Credit Card' ? 'fa-credit-card' : 'fa-building-columns'}"></i></span>
                 <span class="txn-main">
                     <b>${escapeHtml(a.name)} ${a.isMain ? '<span class="badge main">Main</span>' : ''}${a.archived ? '<span class="badge">Archived</span>' : ''}</b>
                     <small>${escapeHtml([a.bank, a.type].filter(Boolean).join(' · '))}</small>
@@ -1418,7 +1413,7 @@ class App {
         if (!items.length) return '';
         return `
             <div class="card">
-                <div class="card-header"><h3>Upcoming Auto-Debits</h3><button class="link-btn" data-action="go" data-view="recurring">All →</button></div>
+                <div class="card-header"><h3>Upcoming auto-debits</h3><button class="link-btn" data-action="go" data-view="recurring">All →</button></div>
                 ${items.map(r => this.recurringRowHtml(r)).join('')}
             </div>`;
     }
@@ -1523,8 +1518,8 @@ class App {
             data: {
                 labels: months.map(m => monthLabel(m, true)),
                 datasets: [
-                    { label: 'Income', data: stats.map(s => s.income), backgroundColor: this.cssVar('--series-1'), borderRadius: 4, maxBarThickness: 22 },
-                    { label: 'Expenses', data: stats.map(s => s.spent + s.invested), backgroundColor: this.cssVar('--series-2'), borderRadius: 4, maxBarThickness: 22 },
+                    { label: 'Income', data: stats.map(s => s.income), backgroundColor: this.cssVar('--series-1'), borderRadius: 3, maxBarThickness: 20 },
+                    { label: 'Expenses', data: stats.map(s => s.spent + s.invested), backgroundColor: this.cssVar('--series-2'), borderRadius: 3, maxBarThickness: 20 },
                 ],
             },
             options: this.chartDefaults(),
@@ -1677,7 +1672,7 @@ class App {
                         <select id="fAccount">${this.accountOptions(accFor(state.type))}</select>
                     </div>
                     <div class="form-group" id="toGroup">
-                        <label for="fToAccount">To Account</label>
+                        <label for="fToAccount">To account</label>
                         <select id="fToAccount">${this.accountOptions(txn?.toAccountId || otherAccount?.id)}</select>
                     </div>
                 </div>
@@ -1705,14 +1700,14 @@ class App {
                 </div>
             </form>`;
 
-        this.openSheet(isEdit ? 'Edit Transaction' : draft ? 'Review Transaction' : 'New Transaction', html, body => {
+        this.openSheet(isEdit ? 'Edit transaction' : draft ? 'Review transaction' : 'New transaction', html, body => {
             const form = body.querySelector('#txnForm');
             const renderType = () => {
                 body.querySelectorAll('.type-tabs button').forEach(b => b.classList.toggle('active', b.dataset.type === state.type));
                 const isTransfer = state.type === 'Transfer';
                 body.querySelector('#catSection').hidden = isTransfer;
                 body.querySelector('#toGroup').hidden = !isTransfer;
-                body.querySelector('#fAccountLabel').textContent = isTransfer ? 'From Account' : state.type === 'Income' ? 'Received in' : 'Paid from';
+                body.querySelector('#fAccountLabel').textContent = isTransfer ? 'From account' : state.type === 'Income' ? 'Received in' : 'Paid from';
                 const cats = state.type === 'Income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
                 if (!cats.find(c => c.id === state.category)) state.category = null;
                 body.querySelector('#catGrid').innerHTML = cats.map(c => `
@@ -1847,11 +1842,11 @@ class App {
                 <p class="auth-error" id="accError"></p>
                 <div class="btn-row">
                     ${isEdit && !acc.isMain ? `<button type="button" class="btn btn-danger-outline" id="accDelete" title="${txnCount ? 'Has transactions — archive instead' : 'Delete'}"><i class="fas fa-trash"></i></button>` : ''}
-                    <button type="submit" class="btn btn-primary grow"><i class="fas fa-check"></i> ${isEdit ? 'Update Account' : 'Add Account'}</button>
+                    <button type="submit" class="btn btn-primary grow"><i class="fas fa-check"></i> ${isEdit ? 'Save account' : 'Add account'}</button>
                 </div>
             </form>`;
 
-        this.openSheet(isEdit ? 'Edit Account' : 'Add Bank Account', html, body => {
+        this.openSheet(isEdit ? 'Edit account' : 'Add bank account', html, body => {
             let chosenColor = color;
             body.querySelectorAll('.swatch-btn').forEach(b => b.addEventListener('click', () => {
                 chosenColor = b.dataset.color;
@@ -1943,7 +1938,7 @@ class App {
                 <div class="btn-row"><button type="submit" class="btn btn-primary grow"><i class="fas fa-bullseye"></i> Save Target</button></div>
             </form>`;
 
-        this.openSheet('Savings Target', html, body => {
+        this.openSheet('Savings target', html, body => {
             const overrideOn = body.querySelector('#tOverrideOn');
             overrideOn.addEventListener('change', () => { body.querySelector('#tOverrideGroup').hidden = !overrideOn.checked; });
             body.querySelectorAll('[data-suggest]').forEach(b => b.addEventListener('click', () => { body.querySelector('#tDefault').value = b.dataset.suggest; }));
@@ -1980,7 +1975,7 @@ class App {
                     <button type="submit" class="btn btn-primary grow"><i class="fas fa-check"></i> Save Budget</button>
                 </div>
             </form>`;
-        this.openSheet(isEdit ? 'Edit Budget' : 'Add Budget', html, body => {
+        this.openSheet(isEdit ? 'Edit budget' : 'Add budget', html, body => {
             body.querySelector('#budgetForm').addEventListener('submit', async e => {
                 e.preventDefault();
                 const record = { id: budget?.id || generateId(), month: budget?.month || this.month, category: body.querySelector('#bCat').value, amount: parseFloat(body.querySelector('#bAmt').value) };
@@ -2080,7 +2075,7 @@ class App {
 
     /* --- Profile sheets --- */
     openNameSheet() {
-        this.openSheet('Display Name', `
+        this.openSheet('Display name', `
             <form id="nameForm" class="sheet-form">
                 <div class="form-group"><label for="pName">Name</label><input type="text" id="pName" value="${escapeHtml(this.data.profile.displayName)}" maxlength="40" required></div>
                 <div class="btn-row"><button type="submit" class="btn btn-primary grow">Save</button></div>
@@ -2096,7 +2091,7 @@ class App {
     }
 
     openPasswordSheet() {
-        this.openSheet('Change Password', `
+        this.openSheet('Change password', `
             <form id="pwForm" class="sheet-form">
                 <div class="form-group"><label for="pwOld">Current password</label><input type="password" id="pwOld" autocomplete="current-password" required></div>
                 <div class="form-group"><label for="pwNew">New password</label><input type="password" id="pwNew" autocomplete="new-password" minlength="6" required></div>

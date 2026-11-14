@@ -270,7 +270,7 @@ const Native = {
     async testNotification() {
         if (!this.isNative) return;
         await this.requestNotificationPermission();
-        await this.notify([{ id: NOTIF.TEST, title: 'MoneyBook notifications work 🎉', body: 'You\'ll get reminders like this one.', schedule: { at: new Date(Date.now() + 2000), allowWhileIdle: true } }]);
+        await this.notify([{ id: NOTIF.TEST, title: 'MoneyBook notifications are working', body: 'You\'ll get reminders like this one.', schedule: { at: new Date(Date.now() + 2000), allowWhileIdle: true } }]);
         this.app.toast('Test notification in 2 seconds');
     },
 };
