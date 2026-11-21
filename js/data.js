@@ -31,6 +31,8 @@ const INCOME_CATEGORIES = [
 ];
 
 const TRANSFER_CATEGORY = { id: 'transfer', name: 'Transfer', icon: 'fas fa-arrow-right-arrow-left' };
+/** Brings an account in line with the bank. Changes the balance, but is neither income nor spending. Delete it to undo. */
+const ADJUSTMENT_CATEGORY = { id: 'adjustment', name: 'Balance correction', icon: 'fas fa-scale-balanced' };
 
 const ACCOUNT_TYPES = ['Savings', 'Salary', 'Current', 'Cash / Wallet', 'Credit Card', 'Other'];
 const PAYMENT_MODES = ['UPI', 'Card', 'Cash', 'Net Banking', 'Auto-Debit'];
@@ -39,7 +41,7 @@ const ACCOUNT_COLORS = ['#2a78d6', '#1baf7a', '#eb6834', '#6250d6', '#e87ba4', '
 function getCategory(id) {
     return EXPENSE_CATEGORIES.find(c => c.id === id)
         || INCOME_CATEGORIES.find(c => c.id === id)
-        || (id === 'transfer' ? TRANSFER_CATEGORY : { id, name: id || 'Other', icon: 'fas fa-tag' });
+        || (id === 'transfer' ? TRANSFER_CATEGORY : id === 'adjustment' ? ADJUSTMENT_CATEGORY : { id, name: id || 'Other', icon: 'fas fa-tag' });
 }
 
 function emptyUserData(displayName) {
@@ -737,10 +739,11 @@ const Calc = {
     /** Full picture of a month: what came in, went out, was saved, and what carries forward. */
     monthStats(data, monthKey) {
         const txns = this.monthTxns(data, monthKey);
-        let income = 0, spent = 0, invested = 0, transfers = 0;
+        let income = 0, spent = 0, invested = 0, transfers = 0, corrections = 0;
         for (const t of txns) {
             const amt = Number(t.amount) || 0;
-            if (t.type === 'Income') income += amt;
+            if (t.category === 'adjustment') corrections += t.type === 'Income' ? amt : -amt;
+            else if (t.type === 'Income') income += amt;
             else if (t.type === 'Transfer') transfers += amt;
             else if (this.isSavingsCategory(data, t.category)) invested += amt;
             else spent += amt;
@@ -750,7 +753,7 @@ const Calc = {
         const openingBalance = this.totalBalance(data, `${shiftMonth(monthKey, -1)}-31`);  // carried in from last month
         const closingBalance = this.totalBalance(data, lastDayOfMonth(monthKey));            // carried forward to next month
         return {
-            monthKey, income, spent, invested, transfers, saved, target,
+            monthKey, income, spent, invested, transfers, corrections, saved, target,
             vsTarget: saved - target,
             targetPct: target > 0 ? Math.round((saved / target) * 100) : null,
             savingsRate: income > 0 ? Math.round((saved / income) * 100) : null,
@@ -782,7 +785,7 @@ const Calc = {
     categorySpend(data, monthKey) {
         const map = {};
         for (const t of this.monthTxns(data, monthKey)) {
-            if (t.type !== 'Expense') continue;
+            if (t.type !== 'Expense' || t.category === 'adjustment') continue;
             map[t.category] = (map[t.category] || 0) + Number(t.amount);
         }
         return Object.entries(map).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);

@@ -1,8 +1,10 @@
 name: Android APK
 
+# main      → tested, signed APK published as a release (phones get the update banner/notification)
+# preview   → same APK, kept as a download on the workflow run only: try it on your phone first, nobody is notified
 on:
   push:
-    branches: [main]
+    branches: [main, preview]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 2.1.${{ github.run_number }}
+      VERSION_NAME: 2.1.${{ github.run_number }}${{ github.ref != 'refs/heads/main' && '-preview' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -72,6 +74,7 @@ jobs:
           path: ${{ runner.temp }}/MoneyBook.apk
 
       - name: Publish release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION_NAME }}

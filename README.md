@@ -50,8 +50,16 @@ Android APK (Capacitor)                              Website (GitHub Pages)
 
 ```
 npm install
+npm test              # SMS parser + bank statement (CSV) tests
+npm run preview       # try the app locally with test data → http://localhost:8080
 npm run sync          # copy web files to www/ and into the Android project
 ```
+
+### Try changes before releasing them
+
+1. **On your computer (instant):** `npm run preview`, open http://localhost:8080 and sign up. The preview uses a fake Google Sheet stored in `.preview/sheet.json`, so your real data is never touched. Edit a file and refresh the page to see the change. To test with your own numbers, use More → Export in the real app, then More → Import in the preview. Start over with `npm run preview -- --reset`.
+2. **On your phone, in the browser:** while the preview runs, open the "On your phone" address it prints (same Wi-Fi). Pasting from the clipboard needs the paste box there, because browsers only allow automatic paste on `localhost`.
+3. **On your phone, as the real app:** push to the `preview` branch (`git push origin main:preview`). GitHub builds the APK in about 5 minutes and attaches it to the run under Actions → Android APK → the run → Artifacts. No release is published and nobody gets an update notification. When you're happy, push to `main` to release it.
 
 - **Every push to `main`:**
   - GitHub Actions runs the SMS parser unit tests, builds the APK and publishes it as a new release.

@@ -605,18 +605,37 @@ class App {
         const diff = Math.round((last.balanceAfter - ours) * 100) / 100;
         if (Math.abs(diff) < 1) return;
         const ok = await this.confirm('Balance doesn\'t match your bank',
-            `Your bank says ${formatCurrency(last.balanceAfter)} after this transaction, but MoneyBook shows ${formatCurrency(ours)} (${diff > 0 ? '+' : ''}${formatCurrency(diff)}). `
-            + `Usually the starting balance is off or some payments weren't added. Correct ${acc.name}'s starting balance so it matches the bank?`, 'Fix balance');
+            `${acc.name}: your bank says ${formatCurrency(last.balanceAfter)} after this transaction, but MoneyBook shows ${formatCurrency(ours)} (${diff > 0 ? '+' : ''}${formatCurrency(diff)}). `
+            + `Usually a few payments weren't added yet. Add a ${formatCurrency(Math.abs(diff))} balance correction to ${acc.name}? It shows in Activity, isn't counted as income or spending, and you can delete it any time.`, 'Add correction');
         if (!ok) return;
         // A sync may have refreshed the data while the dialog was open: work on the current account
         const live = this.accountById(last.accountId);
         if (!live) return;
         const now = Calc.accountBalanceAt(this.data, live, last.date, last.time);
-        // Starting balance that makes MoneyBook equal the bank at that moment
-        const openingCounted = live.openingDate <= last.date ? Number(live.openingBalance) || 0 : 0;
-        live.openingBalance = Math.round((last.balanceAfter - (now - openingCounted)) * 100) / 100;
-        if (live.openingDate > last.date) live.openingDate = last.date;
-        await this.persist(`${live.name} now matches your bank: ${formatCurrency(Calc.accountBalance(this.data, live))}`);
+        await this.addCorrection(live, last.balanceAfter - now, last.date, last.time);
+    }
+
+    /**
+     * Records the gap to the bank as a "Balance correction" entry, so it can be seen and undone.
+     * The account's starting balance is never rewritten.
+     */
+    async addCorrection(account, diff, date, time = '') {
+        diff = Math.round(diff * 100) / 100;
+        if (Math.abs(diff) < 0.01) return null;
+        const entry = {
+            id: generateId(), type: diff > 0 ? 'Income' : 'Expense', amount: Math.abs(diff), date, time: time || '',
+            accountId: account.id, category: 'adjustment', paymentMode: '', note: 'Balance correction', source: 'correction', refNo: '',
+        };
+        this.data.transactions.push(entry);
+        await this.persist(null);
+        this.toast(`${account.name} now matches your bank: ${formatCurrency(Calc.accountBalance(this.data, account))}`, 'success', {
+            label: 'Undo',
+            run: async () => {
+                this.data.transactions = this.data.transactions.filter(t => t.id !== entry.id);
+                await this.persist(`Correction removed. ${account.name}: ${formatCurrency(Calc.accountBalance(this.data, account))}`);
+            },
+        });
+        return entry;
     }
 
     /** One draft → the normal review sheet; several (or a duplicate) → the checklist. */
@@ -781,7 +800,7 @@ class App {
                     <i class="fas fa-file-excel"></i>
                     <b>Choose statement file</b>
                     <small>Excel (.xls, .xlsx) or CSV, downloaded from net banking</small>
-                    <input type="file" id="stFile" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+                    <input type="file" id="stFile" accept=".csv,.txt,.xls,.xlsx,text/csv,text/comma-separated-values,application/csv,text/plain,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream" hidden>
                 </label>
                 <p class="hint"><i class="fas fa-circle-info"></i> In net banking, open the account statement, pick the dates, and download as <b>Excel</b> or <b>CSV</b>. PDF statements aren't supported yet. The file is read on this device; only the transactions you import are saved.</p>
                 <div id="stResult"></div>
@@ -1088,7 +1107,7 @@ class App {
                     <span class="txn-icon ${t.type.toLowerCase()}"><i class="${cat.icon}"></i></span>
                     <span class="txn-main">
                         <b>${escapeHtml(displayName(t.note) || cat.name)}</b>
-                        <small>${t.note ? escapeHtml(cat.name) + ' · ' : ''}${sub}</small>
+                        <small>${t.note && t.note !== cat.name ? escapeHtml(cat.name) + ' · ' : ''}${sub}</small>
                     </span>
                     <span class="txn-amt ${amtClass}">${sign}${formatCurrency(t.amount)}</span>
                 </button>`;
@@ -1107,8 +1126,9 @@ class App {
             .filter(t => !search || `${t.note} ${getCategory(t.category).name} ${t.paymentMode} ${t.amount}`.toLowerCase().includes(search))
             .sort((a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || '') || b.id.localeCompare(a.id));
 
-        const inSum = txns.filter(t => t.type === 'Income').reduce((s, t) => s + Number(t.amount), 0);
-        const outSum = txns.filter(t => t.type === 'Expense').reduce((s, t) => s + Number(t.amount), 0);
+        // Balance corrections change the balance but are neither money in nor money out
+        const inSum = txns.filter(t => t.type === 'Income' && t.category !== 'adjustment').reduce((s, t) => s + Number(t.amount), 0);
+        const outSum = txns.filter(t => t.type === 'Expense' && t.category !== 'adjustment').reduce((s, t) => s + Number(t.amount), 0);
 
         el.innerHTML = `
             ${this.monthSwitcher()}
@@ -1150,7 +1170,7 @@ class App {
         const history = Calc.savingsHistory(d, this.month, 12);
         const cumulative = history.length ? history[history.length - 1].cumulativeVsTarget : 0;
         const anyTarget = history.some(r => r.target > 0);
-        const newAccountsAdj = s.closingBalance - (s.openingBalance + s.income - s.spent - s.invested);
+        const newAccountsAdj = s.closingBalance - (s.openingBalance + s.income - s.spent - s.invested + s.corrections);
 
         el.innerHTML = `
             ${this.monthSwitcher()}
@@ -1171,6 +1191,7 @@ class App {
                     <div class="flow-row"><span><i class="fas fa-plus income-c"></i> Income</span><b class="income-c">${formatCurrency(s.income)}</b></div>
                     <div class="flow-row"><span><i class="fas fa-minus expense-c"></i> Expenses</span><b class="expense-c">${formatCurrency(s.spent)}</b></div>
                     ${s.invested ? `<div class="flow-row"><span><i class="fas fa-minus"></i> Invested (SIP etc.)</span><b>${formatCurrency(s.invested)}</b></div>` : ''}
+                    ${Math.abs(s.corrections) > 0.005 ? `<div class="flow-row"><span><i class="fas fa-scale-balanced"></i> Balance corrections</span><b>${s.corrections > 0 ? '+' : '−'}${formatCurrency(Math.abs(s.corrections))}</b></div>` : ''}
                     ${Math.abs(newAccountsAdj) > 0.005 ? `<div class="flow-row"><span><i class="fas fa-plus"></i> New account opening balances</span><b>${formatCurrency(newAccountsAdj)}</b></div>` : ''}
                     <div class="flow-row total"><span>Carry forward to ${monthLabel(shiftMonth(this.month, 1), true)}</span><b>${formatCurrency(s.closingBalance)}</b></div>
                 </div>
@@ -1469,7 +1490,7 @@ class App {
         const d = this.data;
         const cats = Calc.categorySpend(d, this.month);
         const total = cats.reduce((s, c) => s + c.amount, 0);
-        const monthTx = Calc.monthTxns(d, this.month).filter(t => t.type === 'Expense');
+        const monthTx = Calc.monthTxns(d, this.month).filter(t => t.type === 'Expense' && t.category !== 'adjustment');
         const byAccount = {}; const byMode = {};
         monthTx.forEach(t => {
             byAccount[t.accountId] = (byAccount[t.accountId] || 0) + Number(t.amount);
@@ -1824,7 +1845,7 @@ class App {
                 <div class="form-group">
                     <label for="aBankNow">Balance in bank right now (optional)</label>
                     <input type="number" id="aBankNow" inputmode="decimal" step="0.01" placeholder="MoneyBook shows ${escapeHtml(String(Calc.accountBalance(d, acc)))}">
-                    <small>Enter what your bank app shows and MoneyBook adjusts the starting balance to match.</small>
+                    <small>Enter what your bank app shows. MoneyBook adds a balance correction for the difference, which you can delete later.</small>
                 </div>` : ''}
                 <label class="check-row">
                     <input type="checkbox" id="aMain" ${acc?.isMain || isFirst ? 'checked' : ''} ${isFirst ? 'disabled' : ''}>
@@ -1876,11 +1897,6 @@ class App {
                     archived,
                 };
                 const bankNow = parseFloat(body.querySelector('#aBankNow')?.value);
-                if (isEdit && isFinite(bankNow)) {
-                    // Starting balance = bank balance minus everything recorded for this account
-                    const movements = Calc.accountBalance(d, record) - (Number(record.openingBalance) || 0);
-                    record.openingBalance = Math.round((bankNow - movements) * 100) / 100;
-                }
                 if (record.isMain) d.accounts.forEach(a => { a.isMain = false; });
                 if (isEdit) d.accounts[d.accounts.findIndex(a => a.id === acc.id)] = record;
                 else d.accounts.push(record);
@@ -1889,7 +1905,13 @@ class App {
                     if (fallback) fallback.isMain = true;
                 }
                 this.closeSheet();
-                await this.persist(isEdit ? 'Account updated' : `${name} added`);
+                const gap = isEdit && isFinite(bankNow) ? Math.round((bankNow - Calc.accountBalance(d, record)) * 100) / 100 : 0;
+                if (Math.abs(gap) >= 0.01) {
+                    // Matching the bank adds a visible, undoable correction dated now; the starting balance stays as typed
+                    await this.addCorrection(record, gap, todayStr(), new Date().toTimeString().slice(0, 5));
+                } else {
+                    await this.persist(isEdit ? 'Account updated' : `${name} added`);
+                }
             });
 
             body.querySelector('#accDelete')?.addEventListener('click', async () => {
@@ -2145,12 +2167,25 @@ class App {
         });
     }
 
-    toast(message, type = 'info') {
+    /** Short message at the bottom. `action` ({ label, run }) adds a button, e.g. Undo, and keeps it up longer. */
+    toast(message, type = 'info', action = null) {
         const el = document.getElementById('toast');
         el.textContent = message;
-        el.className = `toast show ${type}`;
+        el.className = `toast show ${type}${action ? ' has-action' : ''}`;
+        if (action) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'toast-action';
+            btn.textContent = action.label;
+            btn.addEventListener('click', () => {
+                el.classList.remove('show');
+                clearTimeout(this.toastTimer);
+                action.run();
+            }, { once: true });
+            el.appendChild(btn);
+        }
         clearTimeout(this.toastTimer);
-        this.toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+        this.toastTimer = setTimeout(() => el.classList.remove('show'), action ? 8000 : 2600);
     }
 }
 

@@ -712,6 +712,12 @@ input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner
 .toast.success::before { display: block; background: #4cc38a; }
 .toast.error::before { display: block; background: #ef6461; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.show.has-action { pointer-events: auto; text-align: left; justify-content: space-between; width: min(420px, calc(100% - 32px)); }
+.toast-action {
+    margin-left: 8px; padding: 4px 8px; min-height: 32px; border-radius: 6px; color: #9db0ff; font-weight: 500; flex-shrink: 0;
+    transition: background-color var(--fast) var(--ease);
+}
+.toast-action:hover { background: rgba(255, 255, 255, .08); }
 @media (prefers-color-scheme: dark) { .toast { background: #2a2b2f; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); } }
 @media (min-width: 900px) { .toast { bottom: 32px; left: calc(50% + var(--rail-w) / 2); } }
 

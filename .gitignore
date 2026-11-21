@@ -9,3 +9,4 @@ android/local.properties
 android/app/src/main/assets/public/
 *.keystore
 *.jks
+.preview/

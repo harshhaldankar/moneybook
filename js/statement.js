@@ -22,29 +22,91 @@ const Statement = {
 
     /** Reads a .csv / .xls / .xlsx file into { rows: [...], from, to } or throws with a friendly message. */
     async read(file) {
-        await this.loadLib();
-        const isText = /\.(csv|txt)$/i.test(file.name) || /text|csv/.test(file.type);
-        // Text is read as plain strings so "01/11/26" stays day-first (Indian format)
-        const wb = isText
-            ? XLSX.read(await file.text(), { type: 'string', raw: true })
-            : XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
-        for (const name of wb.SheetNames) {
-            const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
-            const parsed = this.parseGrid(grid);
-            if (parsed.rows.length) return parsed;
+        const buf = await file.arrayBuffer();
+        const isExcel = /\.xlsx?$/i.test(file.name) || /spreadsheet|ms-excel/.test(file.type);
+        let best = { rows: [] };
+        // CSV / text passbooks are read here, offline, as plain strings so "01/11/26" stays day-first
+        if (!isExcel || this.looksLikeText(buf)) {
+            best = this.parseGrid(this.parseText(this.decode(buf)));
+            if (best.rows.length) return best;
         }
-        throw new Error('Couldn\'t find transactions in that file. Download the statement as Excel or CSV from net banking.');
+        // Excel files (and anything the text reader couldn't use) go through SheetJS
+        let lib = true;
+        if (isExcel || !best.header) {
+            try { await this.loadLib(); } catch (e) { if (isExcel) throw e; lib = false; }   // CSV still works offline
+        }
+        if (lib && (isExcel || !best.header)) {
+            const wb = XLSX.read(buf, { type: 'array', cellDates: true, raw: !isExcel });
+            for (const name of wb.SheetNames) {
+                const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+                const parsed = this.parseGrid(grid);
+                if (parsed.rows.length) return parsed;
+                if (!best.header && parsed.header) best = parsed;
+            }
+        }
+        if (best.header) {
+            throw new Error(`Found the columns (${best.header.filter(Boolean).slice(0, 8).join(', ')}) but no rows with a date and an amount under them.`);
+        }
+        throw new Error(`Couldn't find a header row with date, description and debit/credit (or amount) columns.${best.sample ? ` The file starts with: ${best.sample}` : ''} Download the statement as Excel or CSV from net banking, or send this message to the person who set up MoneyBook.`);
+    },
+
+    /** Text files can be UTF-8, or UTF-16 with a byte-order mark (some banks' "Excel" exports). */
+    decode(buf) {
+        const b = new Uint8Array(buf.slice(0, 4));
+        if (b[0] === 0xff && b[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf);
+        if (b[0] === 0xfe && b[1] === 0xff) return new TextDecoder('utf-16be').decode(buf);
+        // UTF-16 without a mark shows up as every other byte being 0
+        const head = new Uint8Array(buf.slice(0, 200));
+        const zeros = head.filter((x, i) => i % 2 === 1 && x === 0).length;
+        if (head.length > 20 && zeros > head.length / 4) return new TextDecoder('utf-16le').decode(buf);
+        return new TextDecoder('utf-8').decode(buf).replace(/^﻿/, '');
+    },
+
+    /** True for text files saved with an .xls name (common with Indian banks), false for real Excel binaries. */
+    looksLikeText(buf) {
+        const b = new Uint8Array(buf.slice(0, 8));
+        const zip = b[0] === 0x50 && b[1] === 0x4b;                       // .xlsx
+        const ole = b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11;        // .xls
+        const html = /^\s*</.test(String.fromCharCode(...b));               // HTML table saved as .xls
+        return !zip && !ole && !html;
+    },
+
+    /** Small CSV reader: quoted fields, and comma, semicolon, tab or pipe separators (whichever the file uses). */
+    parseText(text) {
+        const lines = text.split(/\r\n|\n|\r/);
+        const sample = lines.filter(l => l.trim()).slice(0, 30).join('\n');
+        const count = ch => (sample.match(new RegExp(ch === '|' ? '\\|' : ch, 'g')) || []).length;
+        const sep = [',', ';', '\t', '|'].reduce((a, b) => (count(b) > count(a) ? b : a), ',');
+        const grid = [];
+        let row = [], cell = '', quoted = false;
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (quoted) {
+                if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+                else if (ch === '"') quoted = false;
+                else cell += ch;
+            } else if (ch === '"' && cell.trim() === '') { quoted = true; cell = ''; }
+            else if (ch === sep) { row.push(cell.trim()); cell = ''; }
+            else if (ch === '\n' || ch === '\r') {
+                if (ch === '\r' && text[i + 1] === '\n') i++;
+                row.push(cell.trim()); grid.push(row); row = []; cell = '';
+            } else cell += ch;
+        }
+        if (cell || row.length) { row.push(cell.trim()); grid.push(row); }
+        // Excel's ="0012345" style cells
+        return grid.map(r => r.map(c => c.replace(/^="(.*)"$/, '$1')));
     },
 
     findColumns(cells) {
         const find = (re, not) => cells.findIndex(c => re.test(c) && !(not && not.test(c)));
         const cols = {
-            date: find(/^(txn|tran|transaction|posting|value)?\s*\.?\s*date$|^date\b/, /value/),
-            desc: find(/narration|description|particulars|remarks|details/),
+            date: find(/^(txn|tran|transaction|posting|post|value)?\s*\.?\s*(posted\s*)?date$|^date\b/, /value/),
+            desc: find(/narration|narrative|description|particulars|remarks|details/),
             debit: find(/withdraw|withdrawl|debit|^dr\.?$|paid out/, /credit|\/|balance/),
             credit: find(/deposit|credit|^cr\.?$|paid in/, /debit|\/|balance/),
-            amount: find(/^(txn |transaction )?amount|amount \(/, /balance/),
-            type: find(/dr\s*\/\s*cr|cr\s*\/\s*dr|^type$|debit\s*\/\s*credit/),
+            amount: find(/^(txn |transaction )?amount|amount ?\(/, /balance/),
+            type: find(/dr\s*\/\s*cr|cr\s*\/\s*dr|^type$|debit\s*\/\s*credit|^(txn |transaction )?type$/),
+            balance: find(/balance/, /opening|closing/),
         };
         if (cols.date < 0) cols.date = find(/date/);
         return cols;
@@ -53,11 +115,14 @@ const Statement = {
     parseGrid(grid) {
         let header = -1, cols = null;
         for (let i = 0; i < Math.min(grid.length, 80); i++) {
-            const cells = grid[i].map(c => String(c).toLowerCase().replace(/\s+/g, ' ').trim());
+            const cells = (grid[i] || []).map(c => String(c).toLowerCase().replace(/\s+/g, ' ').trim());
             const c = this.findColumns(cells);
             if (c.date >= 0 && c.desc >= 0 && ((c.debit >= 0 && c.credit >= 0) || c.amount >= 0)) { header = i; cols = c; break; }
         }
-        if (header < 0) return { rows: [] };
+        if (header < 0) {
+            const first = grid.find(r => (r || []).filter(c => String(c).trim()).length >= 3);
+            return { rows: [], sample: first ? first.filter(c => String(c).trim()).slice(0, 8).join(' | ').slice(0, 160) : '' };
+        }
 
         const rows = [];
         for (const r of grid.slice(header + 1)) {
@@ -65,6 +130,7 @@ const Statement = {
             const date = this.parseDate(r[cols.date]);
             const desc = String(r[cols.desc] ?? '').replace(/\s+/g, ' ').trim();
             if (!date || !desc) continue;
+            const balance = cols.balance >= 0 && String(r[cols.balance] ?? '').trim() !== '' ? this.num(r[cols.balance]) : null;
             let amount = 0, type = null;
             if (cols.debit >= 0 && cols.credit >= 0) {
                 const dr = this.num(r[cols.debit]), cr = this.num(r[cols.credit]);
@@ -75,11 +141,31 @@ const Statement = {
                 const t = String(cols.type >= 0 ? r[cols.type] : raw).toLowerCase();
                 type = /\bcr|credit|deposit/.test(t) ? 'Income' : /\bdr|debit|withdraw|-/.test(t) || this.num(raw) < 0 ? 'Expense' : null;
             }
-            if (!(amount > 0) || !type) continue;
-            rows.push({ date, desc, amount: Math.round(amount * 100) / 100, type });
+            // Zero-amount lines (opening balance, B/F) are kept until directions are worked out from the balance
+            if (!(amount > 0) && balance === null) continue;
+            rows.push({ date, desc, amount: Math.round(amount * 100) / 100, type, balance });
         }
-        const dates = rows.map(r => r.date).sort();
-        return { rows, from: dates[0], to: dates[dates.length - 1] };
+        this.inferFromBalance(rows);
+        const kept = rows.filter(r => r.type && r.amount > 0).map(({ balance, ...r }) => r);
+        const dates = kept.map(r => r.date).sort();
+        return { rows: kept, header: grid[header].map(c => String(c).trim()), from: dates[0], to: dates[dates.length - 1] };
+    },
+
+    /**
+     * Passbooks often print only an amount and the running balance. The balance going up or down
+     * tells credit from debit. Works whether the file lists oldest or newest first.
+     */
+    inferFromBalance(rows) {
+        if (!rows.some(r => !r.type) || rows.filter(r => r.balance !== null).length < 2) return;
+        const newestFirst = rows.length > 1 && rows[0].date > rows[rows.length - 1].date;
+        rows.forEach((r, i) => {
+            if (r.type || r.balance === null) return;
+            const prev = rows[newestFirst ? i + 1 : i - 1];          // the row just before it in time
+            if (prev && prev.balance !== null) {
+                const delta = Math.round((r.balance - prev.balance) * 100) / 100;
+                if (Math.abs(Math.abs(delta) - r.amount) < 0.01) r.type = delta > 0 ? 'Income' : 'Expense';
+            }
+        });
     },
 
     num(v) {
@@ -105,7 +191,7 @@ const Statement = {
         const s = String(v ?? '').trim();
         const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
         let m;
-        if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s))) return ok(+m[1], +m[2], +m[3]);
+        if ((m = /^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})/.exec(s))) return ok(+m[1], +m[2], +m[3]);
         if ((m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b/.exec(s))) return ok(+m[3], +m[2], +m[1]);
         if ((m = /^(\d{1,2})[\s/-]*([a-z]{3})[a-z]*[\s/,-]*(\d{2,4})\b/i.exec(s)) && months[m[2].toLowerCase()]) return ok(+m[3], months[m[2].toLowerCase()], +m[1]);
         return null;

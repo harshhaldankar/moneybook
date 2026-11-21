@@ -6,7 +6,8 @@
   "scripts": {
     "build:web": "node scripts/build-web.js",
     "sync": "npm run build:web && npx cap sync android",
-    "test": "node scripts/test-parser.js"
+    "test": "node scripts/test-parser.js && node scripts/test-statement.js",
+    "preview": "node scripts/preview.js"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "9.1.2",
