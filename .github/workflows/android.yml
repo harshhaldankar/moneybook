@@ -18,6 +18,8 @@ jobs:
       VERSION_NAME: 2.1.${{ github.run_number }}${{ github.ref != 'refs/heads/main' && '-preview' || '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, to see whether RELEASE_NOTES.md changed in this push
 
       - uses: actions/setup-node@v4
         with:
@@ -73,16 +75,35 @@ jobs:
           name: MoneyBook-${{ env.VERSION_NAME }}
           path: ${{ runner.temp }}/MoneyBook.apk
 
+      # Release text: RELEASE_NOTES.md when it was updated in this push, otherwise the commit headline.
+      # Its first line ("What's new: ...") is what the in-app banner and the update notification show.
+      - name: Write release notes
+        if: github.ref == 'refs/heads/main'
+        env:
+          BEFORE: ${{ github.event.before }}
+          HEADLINE: ${{ github.event.head_commit.message }}
+        run: |
+          notes="$RUNNER_TEMP/notes.md"
+          changed=no
+          if [ -f RELEASE_NOTES.md ]; then
+            if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null || ! git diff --quiet "$BEFORE" HEAD -- RELEASE_NOTES.md; then changed=yes; fi
+          fi
+          if [ "$changed" = yes ]; then
+            cat RELEASE_NOTES.md > "$notes"
+          else
+            first_line=$(printf '%s\n' "${HEADLINE:-Improvements and fixes}" | head -n 1)
+            echo "What's new: ${first_line}" > "$notes"
+          fi
+          printf '\nDownload **MoneyBook.apk** below and open it on your Android phone to install or update.\nBuilt from %s.\n' "$GITHUB_SHA" >> "$notes"
+          echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
+          cat "$notes"
+
       - name: Publish release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION_NAME }}
           name: MoneyBook ${{ env.VERSION_NAME }}
-          body: |
-            What's new: ${{ github.event.head_commit.message || 'Improvements and fixes' }}
-
-            Download **MoneyBook.apk** below and open it on your Android phone to install or update.
-            Built from ${{ github.sha }}.
+          body_path: ${{ env.NOTES_FILE }}
           files: ${{ runner.temp }}/MoneyBook.apk
           make_latest: true
